@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "kitsu-vtuber-ai"
+version = "0.1.0"
+description = "Core services for the Kitsu.exe VTuber AI pipeline"
+authors = ["Kitsu Team <devs@example.com>"]
+readme = "README.md"
+packages = [
+    { include = "apps" },
+    { include = "libs" },
+    { include = "configs" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.110.0"
+uvicorn = { extras = ["standard"], version = "^0.29.0" }
+python-dotenv = "^1.0.1"
+webrtcvad = "^2.0.10"
+twitchio = "^2.9.1"
+obsws-python = "^1.8.3"
+aiosqlite = "^0.19.0"
+httpx = "^0.27.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.1.1"
+
+[build-system]
+requires = ["poetry-core>=1.6.0"]
+build-backend = "poetry.core.masonry.api"
