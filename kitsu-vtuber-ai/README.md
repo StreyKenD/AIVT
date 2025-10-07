@@ -1,6 +1,6 @@
 # Kitsu.exe Core (kitsu-vtuber-ai)
 
-Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caótica que conversa, reage e controla seu avatar ao vivo. O pipeline principal segue **ASR → LLM → TTS**, com integrações para Twitch, OBS e VTube Studio.
+Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caótica que conversa, reage e controla seu avatar ao vivo. O pipeline principal segue **ASR → LLM → TTS**, com integrações para Twitch, OBS e VTube Studio. Consulte também o [RUN_FIRST.md](RUN_FIRST.md) para o checklist inicial de configuração local e avisos de licenciamento obrigatórios.
 
 ```
 [Twitch Chat / Voz]
@@ -50,10 +50,20 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
 - `tests/`: testes de fumaça via `pytest`.
 
 ## Qualidade
-- Lint: `ruff .`
-- Formatação: `black .`
-- Tipagem: `mypy .`
-- Testes: `pytest -q`
+- Lint: `poetry run ruff .`
+- Formatação: `poetry run black --check .`
+- Tipagem: `poetry run mypy`
+- Testes: `poetry run pytest -q`
+- Pré-commit: `poetry run pre-commit run --all-files`
+
+> Instale os hooks localmente com `poetry run pre-commit install` (o arquivo [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) já está configurado para `apps/`, `libs/` e `tests/`).
+
+## Licenças e atribuições
+- LLM padrão: **Llama 3 8B Instruct** via Ollama – leia `licenses/third_party/llama3_license.pdf` antes de redistribuir modelos ou gerar demos públicas.
+- TTS: modelo permissivo do **Coqui-TTS** – consulte `licenses/third_party/coqui_tts_model_card.pdf` para requisitos de uso.
+- Avatar Live2D “Lumi”: crédito obrigatório conforme `licenses/third_party/live2d_lumi_license.pdf` em qualquer apresentação pública.
+
+Mantenha essas referências sempre disponíveis ao compartilhar builds ou gravações do projeto.
 
 ## APIs do Orquestrador
 - `GET /status`: snapshot completo da persona, módulos, cena atual e último pedido de TTS.
