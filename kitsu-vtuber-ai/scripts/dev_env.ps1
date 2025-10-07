@@ -1,0 +1,5 @@
+Write-Host "Configuring development environment for Kitsu.exe..."
+Write-Host "1. Install Poetry (https://python-poetry.org/)"
+Write-Host "2. Run 'poetry install'"
+Write-Host "3. Copy .env.example to .env and fill credentials"
+Write-Host "4. Run 'poetry run uvicorn apps.control_panel_backend.main:app --reload' to start the backend"
