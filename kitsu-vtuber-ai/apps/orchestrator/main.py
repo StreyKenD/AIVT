@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, validator
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
 from libs.memory import MemoryController, MemorySummary
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -57,8 +63,14 @@ class PersonaState:
             "last_updated": self.last_updated,
         }
 
-    def update(self, *, style: Optional[str] = None, chaos_level: Optional[float] = None,
-               energy: Optional[float] = None, family_mode: Optional[bool] = None) -> None:
+    def update(
+        self,
+        *,
+        style: Optional[str] = None,
+        chaos_level: Optional[float] = None,
+        energy: Optional[float] = None,
+        family_mode: Optional[bool] = None,
+    ) -> None:
         if style is not None:
             self.style = style
         if chaos_level is not None:
@@ -71,10 +83,14 @@ class PersonaState:
 
 
 class PersonaUpdate(BaseModel):
-    style: Optional[str] = Field(None, description="Persona style, e.g. kawaii or chaotic")
+    style: Optional[str] = Field(
+        None, description="Persona style, e.g. kawaii or chaotic"
+    )
     chaos_level: Optional[float] = Field(None, ge=0.0, le=1.0)
     energy: Optional[float] = Field(None, ge=0.0, le=1.0)
-    family_mode: Optional[bool] = Field(None, description="Family friendly moderation flag")
+    family_mode: Optional[bool] = Field(
+        None, description="Family friendly moderation flag"
+    )
 
     @validator("style")
     def validate_style(cls, value: Optional[str]) -> Optional[str]:  # noqa: D417
@@ -116,13 +132,58 @@ class ChatIngestRequest(BaseModel):
         return value
 
 
+class TelemetryPublisher:
+    """Sends orchestrator events to an optional telemetry backend."""
+
+    def __init__(self, base_url: Optional[str]) -> None:
+        self._base_url = base_url.rstrip("/") if base_url else None
+        self._client: Optional[httpx.AsyncClient] = None
+        self._retry_factory: Callable[[], AsyncRetrying] = self._default_retry_factory
+
+    def _default_retry_factory(self) -> AsyncRetrying:
+        return AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=4.0),
+            reraise=True,
+        )
+
+    async def startup(self) -> None:
+        if self._base_url is None or self._client is not None:
+            return
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url, timeout=httpx.Timeout(5.0)
+        )
+
+    async def shutdown(self) -> None:
+        if self._client is None:
+            return
+        await self._client.aclose()
+        self._client = None
+
+    async def publish_event(self, event: Dict[str, Any]) -> None:
+        if self._client is None:
+            return
+        try:
+            async for attempt in self._retry_factory():
+                with attempt:
+                    await self._client.post("/events", json=event)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Telemetry publish failed for %s: %s",
+                event.get("type"),
+                exc,
+                exc_info=True,
+            )
+
+
 class EventBroker:
     """Simple pub/sub broker for broadcasting orchestrator events over WebSocket."""
 
-    def __init__(self) -> None:
+    def __init__(self, telemetry: Optional[TelemetryPublisher] = None) -> None:
         self._subscribers: Dict[int, asyncio.Queue[Dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
         self._counter = 0
+        self._telemetry = telemetry
 
     async def subscribe(self) -> tuple[int, asyncio.Queue[Dict[str, Any]]]:
         queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -141,6 +202,23 @@ class EventBroker:
             subscribers = list(self._subscribers.values())
         for queue in subscribers:
             await queue.put(message)
+        if self._telemetry is None:
+            return
+        event_type = message.get("type", "unknown")
+        event_payload = message.get("payload")
+        if event_payload is None:
+            event_payload = {
+                key: value for key, value in message.items() if key != "type"
+            }
+        telemetry_payload = {
+            "type": event_type,
+            "ts": time.time(),
+            "payload": event_payload,
+        }
+        try:
+            await self._telemetry.publish_event(telemetry_payload)
+        except Exception:  # pragma: no cover - defensive guard
+            logger.exception("Telemetry publish raised unexpectedly")
 
 
 class OrchestratorState:
@@ -173,7 +251,9 @@ class OrchestratorState:
         return {
             "status": "ok",
             "persona": self.persona.snapshot(),
-            "modules": {name: module.snapshot() for name, module in self.modules.items()},
+            "modules": {
+                name: module.snapshot() for name, module in self.modules.items()
+            },
             "scene": self.current_scene,
             "last_expression": self.last_expression,
             "last_tts": self.last_tts_request,
@@ -186,7 +266,9 @@ class OrchestratorState:
         summary = await self.memory.prepare(restore, restore_window)
         self.last_summary = summary
         if summary:
-            await self._broker.publish({"type": "memory.restore", "summary": summary.to_dict()})
+            await self._broker.publish(
+                {"type": "memory_summary", "summary": summary.to_dict()}
+            )
 
     async def toggle_module(self, module: str, enabled: bool) -> Dict[str, Any]:
         if module not in self.modules:
@@ -205,7 +287,7 @@ class OrchestratorState:
                 energy=payload.energy,
                 family_mode=payload.family_mode,
             )
-            snapshot = {"type": "persona.update", "persona": self.persona.snapshot()}
+            snapshot = {"type": "persona_update", "persona": self.persona.snapshot()}
         await self._broker.publish(snapshot)
         await self.record_turn(
             "system",
@@ -220,30 +302,32 @@ class OrchestratorState:
                 "voice": request.voice,
                 "ts": time.time(),
             }
-            payload = {"type": "tts.request", "data": self.last_tts_request}
+            payload: Dict[str, Any] = {
+                "type": "tts_request",
+                "data": self.last_tts_request,
+            }
         await self._broker.publish(payload)
         summary_payload = await self.record_turn("assistant", request.text)
-        if summary_payload:
-            payload["summary_generated"] = True
-        else:
-            payload["summary_generated"] = False
+        payload["summary_generated"] = summary_payload is not None
         return payload
 
     async def update_scene(self, scene: str) -> Dict[str, Any]:
         async with self._lock:
             self.current_scene = scene
-            payload = {"type": "obs.scene", "scene": scene, "ts": time.time()}
+            payload = {"type": "obs_scene", "scene": scene, "ts": time.time()}
         await self._broker.publish(payload)
         return payload
 
-    async def update_expression(self, expression: VTSExpressionRequest) -> Dict[str, Any]:
+    async def update_expression(
+        self, expression: VTSExpressionRequest
+    ) -> Dict[str, Any]:
         async with self._lock:
             self.last_expression = {
                 "expression": expression.expression,
                 "intensity": expression.intensity,
                 "ts": time.time(),
             }
-            payload = {"type": "vts.expression", "data": self.last_expression}
+            payload = {"type": "vts_expression", "data": self.last_expression}
         await self._broker.publish(payload)
         return payload
 
@@ -252,7 +336,7 @@ class OrchestratorState:
         if summary is None:
             return None
         self.last_summary = summary
-        payload = {"type": "memory.summary", "summary": summary.to_dict()}
+        payload = {"type": "memory_summary", "summary": summary.to_dict()}
         await self._broker.publish(payload)
         return payload
 
@@ -279,7 +363,8 @@ class OrchestratorState:
 
 
 memory_controller = MemoryController()
-broker = EventBroker()
+telemetry = TelemetryPublisher(os.getenv("TELEMETRY_API_URL"))
+broker = EventBroker(telemetry)
 state = OrchestratorState(broker, memory_controller)
 app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 
@@ -288,6 +373,7 @@ app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 async def on_startup() -> None:
     restore_flag = os.getenv("RESTORE_CONTEXT", "false").lower() in {"1", "true", "yes"}
     restore_window = float(os.getenv("MEMORY_RESTORE_WINDOW_SECONDS", "7200"))
+    await telemetry.startup()
     await state.startup(restore_flag, restore_window)
     state.start_background_tasks()
 
@@ -295,6 +381,7 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await state.shutdown()
+    await telemetry.shutdown()
 
 
 async def get_state() -> OrchestratorState:
@@ -302,7 +389,9 @@ async def get_state() -> OrchestratorState:
 
 
 @app.get("/status")
-async def get_status(orchestrator: OrchestratorState = Depends(get_state)) -> Dict[str, Any]:
+async def get_status(
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
     return orchestrator.snapshot()
 
 
@@ -315,7 +404,9 @@ async def toggle_module(
     try:
         return await orchestrator.toggle_module(module, payload.enabled)
     except KeyError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=404, detail=f"Unknown module: {module}") from exc
+        raise HTTPException(
+            status_code=404, detail=f"Unknown module: {module}"
+        ) from exc
 
 
 @app.post("/persona")

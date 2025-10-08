@@ -1,0 +1,24 @@
+# Shared ignores
+.DS_Store
+Thumbs.db
+
+# Python cache directories
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+
+# Node / Svelte artifacts
+kitsu-telemetry/ui/node_modules/
+kitsu-telemetry/ui/.svelte-kit/
+kitsu-telemetry/ui/build/
+kitsu-telemetry/ui/dist/
+kitsu-telemetry/ui/.vite/
+
+# Editor files
+.idea/
+.vscode/

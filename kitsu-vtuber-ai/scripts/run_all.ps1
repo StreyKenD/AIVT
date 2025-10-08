@@ -2,6 +2,9 @@ param(
     [switch]$UsePoetry
 )
 
+$orchHost = if ($env:ORCH_HOST) { $env:ORCH_HOST } else { "127.0.0.1" }
+$orchPort = if ($env:ORCH_PORT) { $env:ORCH_PORT } else { "8000" }
+
 function Start-ServiceJob {
     param(
         [string]$Name,
@@ -18,7 +21,7 @@ function Start-ServiceJob {
 }
 
 $services = @(
-    @{ Name = "orchestrator"; Command = "uvicorn apps.orchestrator.main:app --reload" },
+    @{ Name = "orchestrator"; Command = ("uvicorn apps.orchestrator.main:app --reload --host {0} --port {1}" -f $orchHost, $orchPort) },
     @{ Name = "control_panel"; Command = "uvicorn apps.control_panel_backend.main:app --reload" },
     @{ Name = "asr_worker"; Command = "python -m apps.asr_worker.main" },
     @{ Name = "policy_worker"; Command = "python -m apps.policy_worker.main" },

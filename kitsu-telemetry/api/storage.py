@@ -6,6 +6,7 @@ import io
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
@@ -13,16 +14,18 @@ import aiosqlite
 
 _DB_ENV_VAR = "TELEMETRY_DB_PATH"
 _DEFAULT_DB_PATH = "telemetry.db"
+_DEFAULT_CSV_HEADER = ("ts", "type", "json_payload")
 
 
 @dataclass(slots=True)
 class TelemetryEvent:
     """Representa um evento recebido pela API de telemetria."""
 
-    source: str
-    event_type: str
+    type: str
+    ts: str
     payload: dict[str, Any]
-    created_at: str | None = None
+    id: int | None = None
+    source: str | None = None
 
 
 def _resolve_db_path(db_path: str | None = None) -> str:
@@ -30,6 +33,30 @@ def _resolve_db_path(db_path: str | None = None) -> str:
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     return str(path)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _format_timestamp(value: Any) -> str:
+    if value is None:
+        return _format_timestamp(_utcnow())
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return _format_timestamp(_utcnow())
+        candidate = raw.replace("Z", "+00:00").replace(" ", "T")
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            return raw
+        return parsed.isoformat()
+    return _format_timestamp(_utcnow())
 
 
 async def init_db(db_path: str | None = None) -> None:
@@ -59,10 +86,15 @@ async def insert_event(event: TelemetryEvent, db_path: str | None = None) -> int
     async with aiosqlite.connect(database_path) as conn:
         cursor = await conn.execute(
             """
-            INSERT INTO telemetry_events (source, event_type, payload)
-            VALUES (?, ?, ?)
+            INSERT INTO telemetry_events (source, event_type, payload, created_at)
+            VALUES (?, ?, ?, ?)
             """,
-            (event.source, event.event_type, json.dumps(event.payload, ensure_ascii=False)),
+            (
+                event.source or "",
+                event.type,
+                json.dumps(event.payload, ensure_ascii=False),
+                _format_timestamp(event.ts),
+            ),
         )
         await conn.commit()
         return cursor.lastrowid
@@ -79,7 +111,7 @@ async def list_events(
 
     database_path = _resolve_db_path(db_path)
     query = [
-        "SELECT source, event_type, payload, COALESCE(created_at, '')",
+        "SELECT id, source, event_type, payload, COALESCE(created_at, '') AS created_at",
         "FROM telemetry_events",
     ]
     clauses: list[str] = []
@@ -105,12 +137,18 @@ async def list_events(
 
     events: list[TelemetryEvent] = []
     for row in rows:
+        payload_raw = row["payload"]
+        try:
+            payload = json.loads(payload_raw)
+        except json.JSONDecodeError:
+            payload = {}
         events.append(
             TelemetryEvent(
-                source=row["source"],
-                event_type=row["event_type"],
-                payload=json.loads(row["payload"]),
-                created_at=row["created_at"],
+                id=row["id"],
+                source=row["source"] or None,
+                type=row["event_type"],
+                ts=_format_timestamp(row["created_at"]),
+                payload=payload,
             )
         )
     return events
@@ -122,7 +160,7 @@ async def stream_events_as_csv(
     """Gera o conteúdo CSV em streaming."""
 
     database_path = _resolve_db_path(db_path)
-    header = list(fieldnames or ("id", "source", "event_type", "payload", "created_at"))
+    header = list(fieldnames or _DEFAULT_CSV_HEADER)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
 
@@ -133,16 +171,17 @@ async def stream_events_as_csv(
 
     async with aiosqlite.connect(database_path) as conn:
         async with conn.execute(
-            "SELECT id, source, event_type, payload, COALESCE(created_at, '') FROM telemetry_events ORDER BY id DESC"
+            "SELECT event_type, payload, COALESCE(created_at, '') FROM telemetry_events ORDER BY id DESC"
         ) as cursor:
             async for row in cursor:
-                payload = row[3]
+                event_type, payload_serialized, created_at = row
+                ts_value = _format_timestamp(created_at)
                 try:
-                    payload_obj = json.loads(payload)
-                    payload = json.dumps(payload_obj, ensure_ascii=False)
+                    payload_obj = json.loads(payload_serialized)
+                    payload_json = json.dumps(payload_obj, ensure_ascii=False)
                 except json.JSONDecodeError:
-                    payload = str(payload)
-                writer.writerow([row[0], row[1], row[2], payload, row[4]])
+                    payload_json = str(payload_serialized)
+                writer.writerow([ts_value, event_type, payload_json])
                 yield buffer.getvalue()
                 buffer.seek(0)
                 buffer.truncate(0)

@@ -26,7 +26,9 @@ class TwitchStub:
     def __init__(self) -> None:
         self.handlers: Dict[str, Callable[[ChatEvent], None]] = {}
 
-    def register_command(self, command: str, handler: Callable[[ChatEvent], None]) -> None:
+    def register_command(
+        self, command: str, handler: Callable[[ChatEvent], None]
+    ) -> None:
         self.handlers[command] = handler
 
     async def emit(self, message: str) -> None:

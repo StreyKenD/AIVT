@@ -51,7 +51,12 @@ class MemoryStore:
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "INSERT INTO mem_summaries (ts, summary_text, mood_state, knobs) VALUES (?, ?, ?, ?)",
-                (summary.ts, summary.summary_text, summary.mood_state, json.dumps(summary.knobs)),
+                (
+                    summary.ts,
+                    summary.summary_text,
+                    summary.mood_state,
+                    json.dumps(summary.knobs),
+                ),
             )
             await db.commit()
             summary.id = cursor.lastrowid

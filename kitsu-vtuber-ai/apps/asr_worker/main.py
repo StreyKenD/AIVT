@@ -33,7 +33,11 @@ async def vad_detects_speech(frame: bytes, sample_rate: int = 16000) -> bool:
 
 async def emit_transcriptions() -> None:
     phrases = [
-        "Hello chat!", "Ara ara~", "Kitsu warming up", "Switching persona", "Hydrate reminder!",
+        "Hello chat!",
+        "Ara ara~",
+        "Kitsu warming up",
+        "Switching persona",
+        "Hydrate reminder!",
     ]
     async for frame in microphone_stream():
         has_speech = await vad_detects_speech(frame)

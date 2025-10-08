@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Dict, Tuple
+from typing import Tuple
 
 import httpx
 from fastapi import FastAPI
@@ -39,7 +39,7 @@ class PolicyResponse(BaseModel):
 
 async def call_ollama(prompt: str, timeout: float = 15.0) -> Tuple[str, str]:
     if POLICY_FORCE_MOCK:
-        raise RuntimeError("Forced mock mode")
+        return build_mock_reply(prompt), "mock"
     try:
         async with httpx.AsyncClient(base_url=OLLAMA_URL, timeout=timeout) as client:
             response = await client.post(
@@ -90,4 +90,9 @@ async def respond(payload: PolicyRequest) -> PolicyResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("apps.policy_worker.main:app", host="0.0.0.0", port=8081, reload=os.getenv("UVICORN_RELOAD") == "1")
+    uvicorn.run(
+        "apps.policy_worker.main:app",
+        host="0.0.0.0",
+        port=8081,
+        reload=os.getenv("UVICORN_RELOAD") == "1",
+    )
