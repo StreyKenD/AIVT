@@ -12,6 +12,11 @@ Este repositório faz parte do projeto Kitsu.exe (IA VTuber). Siga estes contrat
   - (Repo B) API Telemetria: `uvicorn api.main:app --reload`
   - (Repo B) UI SvelteKit: `pnpm i && pnpm dev`
 
+## Dependências de runtime
+- OBS Studio com plugin **OBS WebSocket v5** habilitado (`obsws-python` fixado em `1.7.2` no projeto).
+- Binários externos de áudio/vídeo: `ffmpeg`, `portaudio`, `libsndfile`.
+- Python 3.11+ e Poetry para ambientes isolados; mantenha a versão documentada no README.
+
 ## Qualidade
 - Lint/format: `ruff . && black --check .`
 - Tipos: `mypy` (nível permissivo)

@@ -19,6 +19,12 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
 - Memória curta e persistente com sumários salvos em SQLite.
 - Telemetria e painel de controle externo (ver repositório `kitsu-telemetry`).
 
+## Dependências de runtime
+- Python 3.11+ com [Poetry](https://python-poetry.org/) para gerenciar o ambiente virtual.
+- `obsws-python 1.7.2`, alinhado ao protocolo **OBS WebSocket v5** (habilite o plugin nativo do OBS 28+).
+- Binários externos para áudio/vídeo: `ffmpeg`, `portaudio`, `libsndfile` e drivers das interfaces em uso.
+- Opcional, porém recomendado para desenvolvimento: OBS Studio e VTube Studio atualizados para testar integrações.
+
 ## Rodando localmente
 1. Instale [Poetry](https://python-poetry.org/) e Python 3.11+.
 2. Copie `.env.example` para `.env` e preencha as credenciais.
@@ -37,10 +43,21 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
 
 6. Para inspecionar o orquestrador (FastAPI + WebSocket):
    ```bash
-   poetry run uvicorn apps.orchestrator.main:app --reload --port 8100
+   poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+   curl http://${ORCH_HOST:-127.0.0.1}:${ORCH_PORT:-8000}/status
    ```
 
 > **Atribuição**: O modelo LLM padrão é **Llama 3 8B Instruct** servido pelo Ollama.
+
+## Variáveis de ambiente essenciais
+As variáveis abaixo controlam como o orquestrador expõe seus endpoints HTTP/WebSocket e como os eventos são encaminhados para o módulo de telemetria:
+
+- `ORCH_HOST`: interface de bind utilizada pelo `uvicorn` (padrão `127.0.0.1`). Use `0.0.0.0` ao expor a API para outras máquinas ou para a UI hospedada fora do host local.
+- `ORCH_PORT`: porta pública do orquestrador. Alinhe esse valor com `PUBLIC_ORCH_BASE_URL` e `PUBLIC_ORCH_WS_URL` no repositório `kitsu-telemetry`; o valor recomendado para desenvolvimento é `8000`.
+- `TELEMETRY_API_URL`: URL base (ex.: `http://localhost:8001/api`) para onde os eventos de estado são publicados. Quando vazia, o orquestrador funciona sem telemetria externa.
+
+### CORS do orquestrador
+O `apps.orchestrator.main` aplica `CORSMiddleware` automaticamente. Defina `ORCH_CORS_ALLOW_ORIGINS` com uma lista separada por vírgula contendo as origens autorizadas (por exemplo `http://localhost:5173,http://127.0.0.1:5173`). Por padrão o middleware habilita `GET`, `POST`, `OPTIONS` e upgrades de WebSocket; use `ORCH_CORS_ALLOW_ALL=1` apenas em ambientes de desenvolvimento controlados.
 
 ## Estrutura
 - `apps/`: serviços principais (ASR, política, TTS, orquestração, integrações OBS/VTS/Twitch, backend de controle).
@@ -53,15 +70,15 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
 - Lint: `poetry run ruff .`
 - Formatação: `poetry run black --check .`
 - Tipagem: `poetry run mypy`
-- Testes: `poetry run pytest -q`
+- Testes: `poetry run pytest -q` (ou `python -m pytest -q` após `python -m pip install pytest pytest-asyncio`)
 - Pré-commit: `poetry run pre-commit run --all-files`
 
 > Instale os hooks localmente com `poetry run pre-commit install` (o arquivo [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) já está configurado para `apps/`, `libs/` e `tests/`).
 
-## Licenças e atribuições
-- LLM padrão: **Llama 3 8B Instruct** via Ollama – leia `licenses/third_party/llama3_license.pdf` antes de redistribuir modelos ou gerar demos públicas.
-- TTS: modelo permissivo do **Coqui-TTS** – consulte `licenses/third_party/coqui_tts_model_card.pdf` para requisitos de uso.
-- Avatar Live2D “Lumi”: crédito obrigatório conforme `licenses/third_party/live2d_lumi_license.pdf` em qualquer apresentação pública.
+## Licenças e créditos obrigatórios
+- **Llama 3 8B Instruct (Meta)** via Ollama – leia e acompanhe `licenses/third_party/llama3_license.pdf` antes de qualquer distribuição pública ou demo gravada.
+- **Coqui-TTS (modelo selecionado)** – requisitos detalhados em `licenses/third_party/coqui_tts_model_card.pdf`, incluindo limitações de uso comercial.
+- **Avatar Live2D “Lumi”** – atribuição explícita conforme `licenses/third_party/live2d_lumi_license.pdf` em transmissões, vídeos e materiais promocionais.
 
 Mantenha essas referências sempre disponíveis ao compartilhar builds ou gravações do projeto.
 

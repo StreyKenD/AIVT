@@ -10,7 +10,9 @@ def test_memory_controller_persist(tmp_path: Path) -> None:
     db_path = tmp_path / "memory.sqlite3"
 
     async def scenario() -> None:
-        controller = MemoryController(buffer_size=8, summary_interval=3, database_path=db_path)
+        controller = MemoryController(
+            buffer_size=8, summary_interval=3, database_path=db_path
+        )
         await controller.prepare(restore=False)
 
         await controller.add_turn("user", "Hello there!")
@@ -20,7 +22,9 @@ def test_memory_controller_persist(tmp_path: Path) -> None:
         assert summary.summary_text
         assert "Let's" in summary.summary_text
 
-        restored = MemoryController(buffer_size=8, summary_interval=3, database_path=db_path)
+        restored = MemoryController(
+            buffer_size=8, summary_interval=3, database_path=db_path
+        )
         loaded = await restored.prepare(restore=True)
         assert loaded is not None
         assert loaded.summary_text == summary.summary_text

@@ -43,7 +43,9 @@ class TTSService:
         return await future
 
     async def worker(self) -> None:
-        logger.info("TTS worker ready (model=%s, backup=%s)", self.model_name, self.backup)
+        logger.info(
+            "TTS worker ready (model=%s, backup=%s)", self.model_name, self.backup
+        )
         while True:
             job = await self._queue.get()
             try:
@@ -66,7 +68,9 @@ class TTSService:
             wav_file.writeframes(silence_frame * total_frames)
         visemes = self._viseme_from_text(text, duration)
         logger.info("Generated TTS output path=%s voice=%s", audio_path, voice)
-        return TTSResult(audio_path=audio_path, visemes=visemes, voice=voice or self.model_name)
+        return TTSResult(
+            audio_path=audio_path, visemes=visemes, voice=voice or self.model_name
+        )
 
     def _viseme_from_text(self, text: str, duration: float) -> List[Dict[str, float]]:
         step = max(duration / max(len(text), 1), 0.05)

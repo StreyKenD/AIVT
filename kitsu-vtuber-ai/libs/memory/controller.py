@@ -24,13 +24,17 @@ class MemoryController:
         self.summary_interval = summary_interval
         self._count = 0
         self._summarizer = summarizer or Summarizer()
-        db_path = database_path or Path(os.getenv("MEMORY_DB_PATH", "data/memory.sqlite3"))
+        db_path = database_path or Path(
+            os.getenv("MEMORY_DB_PATH", "data/memory.sqlite3")
+        )
         self._store = store or MemoryStore(db_path)
         self._lock = asyncio.Lock()
         self.current_summary: Optional[MemorySummary] = None
         self.restore_enabled = False
 
-    async def prepare(self, restore: bool, max_age_seconds: float = 7200.0) -> Optional[MemorySummary]:
+    async def prepare(
+        self, restore: bool, max_age_seconds: float = 7200.0
+    ) -> Optional[MemorySummary]:
         await self._store.initialize()
         self.restore_enabled = restore
         if not restore:
@@ -56,7 +60,9 @@ class MemoryController:
             "buffer_length": len(self.buffer),
             "summary_interval": self.summary_interval,
             "restore_enabled": self.restore_enabled,
-            "current_summary": self.current_summary.to_dict() if self.current_summary else None,
+            "current_summary": (
+                self.current_summary.to_dict() if self.current_summary else None
+            ),
         }
 
     async def reset(self) -> None:
