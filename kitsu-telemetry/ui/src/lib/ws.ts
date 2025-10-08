@@ -236,24 +236,49 @@ class TelemetrySocketManager {
   }
 
   private consumeChunk(chunk: string): void {
-    this.buffer += chunk;
-    const pieces = this.buffer.split('\n');
+    if (!chunk) return;
+
+    const combined = this.buffer + chunk;
+    const pieces = combined.split('\n');
     this.buffer = pieces.pop() ?? '';
 
     for (const piece of pieces) {
-      const trimmed = piece.trim();
-      if (!trimmed) continue;
+      this.emitIfValid(piece);
+    }
 
-      try {
-        const payload = JSON.parse(trimmed);
-        if (isTelemetryMessage(payload)) {
-          this.listener(payload);
-        } else {
-          console.warn('[telemetry] ignored unknown payload', payload);
-        }
-      } catch (error) {
-        console.warn('[telemetry] failed to parse payload', error);
+    const trimmedBuffer = this.buffer.trim();
+    if (!trimmedBuffer) {
+      this.buffer = '';
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(trimmedBuffer);
+      if (isTelemetryMessage(payload)) {
+        this.listener(payload);
+        this.buffer = '';
+      } else {
+        console.warn('[telemetry] ignored unknown payload', payload);
+        this.buffer = '';
       }
+    } catch {
+      // keep buffer for partial messages that are not complete JSON yet
+    }
+  }
+
+  private emitIfValid(raw: string): void {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+
+    try {
+      const payload = JSON.parse(trimmed);
+      if (isTelemetryMessage(payload)) {
+        this.listener(payload);
+      } else {
+        console.warn('[telemetry] ignored unknown payload', payload);
+      }
+    } catch (error) {
+      console.warn('[telemetry] failed to parse payload', error);
     }
   }
 }
