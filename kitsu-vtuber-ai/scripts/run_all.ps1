@@ -2,6 +2,7 @@ param(
     [switch]$UsePoetry
 )
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $orchHost = if ($env:ORCH_HOST) { $env:ORCH_HOST } else { "127.0.0.1" }
 $orchPort = if ($env:ORCH_PORT) { $env:ORCH_PORT } else { "8000" }
 
@@ -12,12 +13,9 @@ function Start-ServiceJob {
     )
 
     Write-Host "[RUN_ALL] Starting $Name..."
-    if ($UsePoetry) {
-        Start-Process pwsh -ArgumentList "-NoLogo", "-NoExit", "-Command", "poetry run $Command" -WindowStyle Minimized
-    }
-    else {
-        Start-Process pwsh -ArgumentList "-NoLogo", "-NoExit", "-Command", "$Command" -WindowStyle Minimized
-    }
+    $arguments = if ($UsePoetry) { "poetry run $Command" } else { $Command }
+
+    Start-Process pwsh -ArgumentList "-NoLogo", "-NoExit", "-Command", $arguments -WindowStyle Minimized -WorkingDirectory $repoRoot
 }
 
 $services = @(
