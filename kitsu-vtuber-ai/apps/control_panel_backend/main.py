@@ -109,7 +109,7 @@ def _build_telemetry_headers() -> Dict[str, str]:
 
 
 @asynccontextmanager
-def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gateway = ControlPanelGateway(_ORCHESTRATOR_URL, _TELEMETRY_URL)
     logger.info(
         "Backend de controle pronto", extra={"orchestrator": _ORCHESTRATOR_URL, "telemetry": _TELEMETRY_URL}

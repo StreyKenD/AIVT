@@ -229,6 +229,7 @@ class TTSService:
             if cached:
                 job.future.set_result(cached)
                 await self._emit_metric(job, cached, cached=True)
+                self._queue.task_done()
                 continue
             self._cancel_event.clear()
             self._current_job = job
