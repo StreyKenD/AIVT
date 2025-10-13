@@ -203,5 +203,6 @@ def _parse_json(response: httpx.Response) -> Any:
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=exc.response.status_code, detail=exc.message)
+        detail = exc.response.text or str(exc)
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
     return response.json()
