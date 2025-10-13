@@ -6,7 +6,7 @@ import io
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
@@ -15,6 +15,7 @@ import aiosqlite
 _DB_ENV_VAR = "TELEMETRY_DB_PATH"
 _DEFAULT_DB_PATH = "telemetry.db"
 _DEFAULT_CSV_HEADER = ("ts", "type", "json_payload")
+_NUMERIC_SUFFIXES = ("_ms", "_pct", "_c", "_w", "_mb")
 
 
 @dataclass(slots=True)
@@ -57,6 +58,23 @@ def _format_timestamp(value: Any) -> str:
             return raw
         return parsed.isoformat()
     return _format_timestamp(_utcnow())
+
+
+def _accumulate_numeric(bucket: dict[str, Any], key: str, value: Any) -> None:
+    if value is None or isinstance(value, bool):
+        return
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return
+    stats = bucket.setdefault(
+        key,
+        {"avg": 0.0, "max": number, "min": number, "_count": 0},
+    )
+    stats["_count"] += 1
+    stats["avg"] += number
+    stats["max"] = max(stats["max"], number)
+    stats["min"] = min(stats["min"], number)
 
 
 async def init_db(db_path: str | None = None) -> None:
@@ -196,3 +214,66 @@ async def export_events(
     async for chunk in stream_events_as_csv(db_path=db_path, fieldnames=fieldnames):
         chunks.append(chunk)
     return "".join(chunks)
+
+
+async def prune_events(max_age_seconds: int, db_path: str | None = None) -> int:
+    """Remove eventos mais antigos que o limite configurado."""
+
+    if max_age_seconds <= 0:
+        return 0
+    cutoff = _utcnow() - timedelta(seconds=max_age_seconds)
+    database_path = _resolve_db_path(db_path)
+    async with aiosqlite.connect(database_path) as conn:
+        cursor = await conn.execute(
+            "DELETE FROM telemetry_events WHERE created_at < ?",
+            (cutoff.isoformat(),),
+        )
+        await conn.commit()
+        return cursor.rowcount or 0
+
+
+async def latest_metrics(
+    *, window_seconds: int = 300, db_path: str | None = None
+) -> dict[str, Any]:
+    """Calcula métricas agregadas para a janela deslizante informada."""
+
+    window_seconds = max(60, int(window_seconds))
+    cutoff = _utcnow() - timedelta(seconds=window_seconds)
+    database_path = _resolve_db_path(db_path)
+    sql = (
+        "SELECT event_type, payload, COALESCE(created_at, '') "
+        "FROM telemetry_events WHERE created_at >= ? ORDER BY id DESC"
+    )
+    metrics: dict[str, dict[str, Any]] = {}
+    async with aiosqlite.connect(database_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(sql, (cutoff.isoformat(),)) as cursor:
+            async for row in cursor:
+                event_type = row["event_type"]
+                raw_payload = row["payload"]
+                try:
+                    payload = json.loads(raw_payload)
+                except json.JSONDecodeError:
+                    payload = {}
+                bucket = metrics.setdefault(event_type, {"count": 0})
+                bucket["count"] += 1
+                failures = payload.get("failures")
+                if isinstance(failures, (int, float)):
+                    bucket["failures"] = bucket.get("failures", 0) + int(failures)
+                for key, value in payload.items():
+                    if key == "failures":
+                        continue
+                    if any(key.endswith(suffix) for suffix in _NUMERIC_SUFFIXES):
+                        _accumulate_numeric(bucket, key, value)
+    for bucket in metrics.values():
+        for key, value in list(bucket.items()):
+            if not isinstance(value, dict) or "_count" not in value:
+                continue
+            count = value.pop("_count")
+            if not count:
+                bucket.pop(key)
+                continue
+            value["avg"] = round(value["avg"] / count, 2)
+            value["max"] = round(value["max"], 2)
+            value["min"] = round(value["min"], 2)
+    return {"window_seconds": window_seconds, "metrics": metrics}

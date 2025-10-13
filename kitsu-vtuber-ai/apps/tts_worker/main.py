@@ -4,15 +4,23 @@ import asyncio
 import logging
 import os
 
+from libs.common import configure_json_logging
+
 from .service import TTSService, get_tts_service
 
+configure_json_logging("tts_worker")
 logger = logging.getLogger("kitsu.tts")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 
 async def _bootstrap_jobs(service: TTSService) -> None:
     await asyncio.sleep(1.0)
-    await service.enqueue("Hello world", voice=None)
+    result = await service.enqueue("Hello world", voice=None)
+    logger.info(
+        "Job de teste concluído voice=%s cached=%s latency=%.2fms",
+        result.voice,
+        result.cached,
+        result.latency_ms,
+    )
 
 
 async def main() -> None:

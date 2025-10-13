@@ -13,9 +13,13 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconn
 from pydantic import BaseModel, Field, validator
 from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
+from libs.common import configure_json_logging
 from libs.memory import MemoryController, MemorySummary
+from libs.telemetry import TelemetryClient
+from libs.telemetry.gpu import GPUMonitor
 
 
+configure_json_logging("orchestrator")
 logger = logging.getLogger(__name__)
 
 
@@ -151,6 +155,29 @@ class ASREvent(BaseModel):
         return value
 
 
+class PanicRequest(BaseModel):
+    reason: Optional[str] = Field(
+        None,
+        description="Motivo opcional para o gatilho de pânico",
+        max_length=240,
+    )
+
+
+class MuteRequest(BaseModel):
+    muted: bool = Field(..., description="Define se o TTS deve permanecer mudo")
+
+
+class PresetRequest(BaseModel):
+    preset: str = Field(..., min_length=1, description="Identificador do preset")
+
+    @validator("preset")
+    def validate_preset(cls, value: str) -> str:  # noqa: D417
+        allowed = set(OrchestratorState._PRESETS.keys())  # type: ignore[attr-defined]
+        if value not in allowed:
+            raise ValueError(f"Preset desconhecido: {value}")
+        return value
+
+
 class TelemetryPublisher:
     """Sends orchestrator events to an optional telemetry backend."""
 
@@ -243,6 +270,27 @@ class EventBroker:
 class OrchestratorState:
     """Holds runtime state for the orchestrator and synthesizes status payloads."""
 
+    _PRESETS: Dict[str, Dict[str, Any]] = {
+        "default": {
+            "style": "kawaii",
+            "chaos_level": 0.2,
+            "energy": 0.5,
+            "family_mode": True,
+        },
+        "cozy": {
+            "style": "calm",
+            "chaos_level": 0.15,
+            "energy": 0.35,
+            "family_mode": True,
+        },
+        "hype": {
+            "style": "chaotic",
+            "chaos_level": 0.75,
+            "energy": 0.85,
+            "family_mode": True,
+        },
+    }
+
     def __init__(self, broker: EventBroker, memory: MemoryController) -> None:
         self.persona = PersonaState()
         self.modules: Dict[str, ModuleState] = {
@@ -265,6 +313,10 @@ class OrchestratorState:
         self._lock = asyncio.Lock()
         self.restore_context = False
         self.last_summary: Optional[MemorySummary] = None
+        self.tts_muted = False
+        self.panic_triggered_at: Optional[float] = None
+        self.panic_reason: Optional[str] = None
+        self.active_preset = "default"
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -278,6 +330,12 @@ class OrchestratorState:
             "last_tts": self.last_tts_request,
             "memory": self.memory.snapshot(),
             "restore_context": self.restore_context,
+            "control": {
+                "tts_muted": self.tts_muted,
+                "panic_at": self.panic_triggered_at,
+                "panic_reason": self.panic_reason,
+                "active_preset": self.active_preset,
+            },
         }
 
     async def startup(self, restore: bool, restore_window: float) -> None:
@@ -359,6 +417,54 @@ class OrchestratorState:
         await self._broker.publish(payload)
         return payload
 
+    async def trigger_panic(self, reason: Optional[str]) -> Dict[str, Any]:
+        async with self._lock:
+            self.panic_triggered_at = time.time()
+            self.panic_reason = reason or None
+            payload = {
+                "type": "control.panic",
+                "ts": self.panic_triggered_at,
+            }
+            if self.panic_reason:
+                payload["reason"] = self.panic_reason
+        await self._broker.publish(payload)
+        return payload
+
+    async def set_mute(self, muted: bool) -> Dict[str, Any]:
+        async with self._lock:
+            self.tts_muted = muted
+            payload = {
+                "type": "control.mute",
+                "muted": muted,
+                "ts": time.time(),
+            }
+        await self._broker.publish(payload)
+        await self.toggle_module("tts_worker", enabled=not muted)
+        return payload
+
+    async def apply_preset(self, preset: str) -> Dict[str, Any]:
+        try:
+            config = self._PRESETS[preset]
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            raise ValueError(f"Unknown preset: {preset}") from exc
+
+        persona_update = PersonaUpdate(
+            style=config["style"],
+            chaos_level=config["chaos_level"],
+            energy=config["energy"],
+            family_mode=config.get("family_mode"),
+        )
+        await self.update_persona(persona_update)
+        async with self._lock:
+            self.active_preset = preset
+            payload = {
+                "type": "control.preset",
+                "preset": preset,
+                "ts": time.time(),
+            }
+        await self._broker.publish(payload)
+        return payload
+
     def start_background_tasks(self) -> None:
         self._tasks.append(asyncio.create_task(self._simulate_latency()))
 
@@ -385,6 +491,10 @@ memory_controller = MemoryController()
 telemetry = TelemetryPublisher(os.getenv("TELEMETRY_API_URL"))
 broker = EventBroker(telemetry)
 state = OrchestratorState(broker, memory_controller)
+gpu_monitor = GPUMonitor(
+    TelemetryClient.from_env(service="orchestrator.gpu"),
+    interval_seconds=float(os.getenv("GPU_METRICS_INTERVAL_SECONDS", "30")),
+)
 app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 
 
@@ -395,12 +505,14 @@ async def on_startup() -> None:
     await telemetry.startup()
     await state.startup(restore_flag, restore_window)
     state.start_background_tasks()
+    await gpu_monitor.start()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await state.shutdown()
     await telemetry.shutdown()
+    await gpu_monitor.stop()
 
 
 async def get_state() -> OrchestratorState:
@@ -488,6 +600,33 @@ async def receive_asr_event(
             module.latency_ms = max(1.0, float(metric))
         module.last_updated = time.time()
     return {"status": "accepted"}
+
+
+@app.post("/control/panic")
+async def trigger_panic(
+    payload: PanicRequest,
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
+    return await orchestrator.trigger_panic(payload.reason)
+
+
+@app.post("/control/mute")
+async def toggle_mute(
+    payload: MuteRequest,
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
+    return await orchestrator.set_mute(payload.muted)
+
+
+@app.post("/control/preset")
+async def apply_preset(
+    payload: PresetRequest,
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
+    try:
+        return await orchestrator.apply_preset(payload.preset)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.websocket("/stream")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -11,10 +12,14 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
+from libs.common import configure_json_logging
+from libs.safety import ModerationPipeline
+from libs.telemetry import TelemetryClient
+
+configure_json_logging("policy_worker")
 logger = logging.getLogger("kitsu.policy")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_MODEL = os.getenv("LLM_MODEL_NAME", "mixtral:8x7b-instruct-q4_K_M")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -24,6 +29,18 @@ POLICY_STREAM_TIMEOUT = float(os.getenv("POLICY_STREAM_TIMEOUT", "30"))
 POLICY_RETRY_ATTEMPTS = int(os.getenv("POLICY_RETRY_ATTEMPTS", "1"))
 POLICY_RETRY_BACKOFF = float(os.getenv("POLICY_RETRY_BACKOFF", "1.0"))
 POLICY_TEMPERATURE = float(os.getenv("POLICY_TEMPERATURE", "0.65"))
+
+MODERATION = ModerationPipeline()
+TELEMETRY = TelemetryClient.from_env(service="policy_worker")
+
+
+async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> None:
+    if TELEMETRY is None:
+        return
+    try:
+        await TELEMETRY.publish(event_type, payload)
+    except Exception as exc:  # pragma: no cover - telemetry guard
+        logger.debug("Falha ao enviar métrica da policy: %s", exc)
 
 SYSTEM_PROMPT_TEMPLATE = """
 You are Kitsu.exe, a chaotic-but-kawaii VTuber fox streaming live.
@@ -60,6 +77,12 @@ def _family_mode(payload: "PolicyRequest") -> bool:
     return POLICY_FAMILY_FRIENDLY
 
 
+def _wrap_safe_xml(text: str, mood: str = "kawaii") -> str:
+    sanitized = html.escape(text.strip()) or "Vamos manter tudo fofinho!"
+    actions = "smile" if mood == "kawaii" else "wink"
+    return f"<speech>{sanitized}</speech><mood>{mood}</mood><actions>{actions}</actions>"
+
+
 class PolicyRequest(BaseModel):
     text: str = Field(..., min_length=1)
     persona_style: str = Field("kawaii", description="Current persona style")
@@ -68,6 +91,19 @@ class PolicyRequest(BaseModel):
     family_friendly: Optional[bool] = Field(
         None, description="Override to disable/enable family-friendly filtering"
     )
+    memory_summary: Optional[str] = Field(
+        None, description="Resumo da memória recente fornecido pelo orquestrador"
+    )
+    recent_turns: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Histórico curto de mensagens com campos role/content",
+    )
+
+    @validator("recent_turns", each_item=True)
+    def _validate_turn(cls, value: Dict[str, str]) -> Dict[str, str]:  # noqa: D417
+        if "role" not in value or "content" not in value:
+            raise ValueError("each turn must include role and content")
+        return value
 
 
 class PolicyResponse(BaseModel):
@@ -84,6 +120,19 @@ class OllamaStreamError(RuntimeError):
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _parse_sse(chunk: str) -> tuple[str, Dict[str, Any]]:
+    event = ""
+    payload: Dict[str, Any] = {}
+    for line in chunk.splitlines():
+        if not line:
+            continue
+        if line.startswith("event:"):
+            event = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            payload = json.loads(line.split(":", 1)[1].strip())
+    return event, payload
 
 
 def _tokenize_for_streaming(message: str) -> List[str]:
@@ -115,11 +164,18 @@ def _build_messages(payload: PolicyRequest, family_mode: bool) -> List[Dict[str,
         chaos=payload.chaos_level,
         family="ON" if family_mode else "OFF",
     )
-    messages: List[Dict[str, str]] = [
-        {"role": "system", "content": system_prompt},
-        *FEW_SHOT_EXCHANGES,
-        {"role": "user", "content": payload.text},
-    ]
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    if payload.memory_summary:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Contexto recente: {payload.memory_summary}",
+            }
+        )
+    messages.extend(FEW_SHOT_EXCHANGES)
+    for turn in payload.recent_turns[-6:]:
+        messages.append({"role": turn["role"], "content": turn["content"]})
+    messages.append({"role": "user", "content": payload.text})
     return messages
 
 
@@ -169,6 +225,19 @@ async def _stream_mock_response(
             "model": DEFAULT_MODEL,
             "fallback": True,
             "retries": retries,
+            **({"reason": reason} if reason else {}),
+        },
+    )
+    await _publish_policy_metric(
+        "policy.response",
+        {
+            "request_id": request_id,
+            "status": "degraded" if reason else "ok",
+            "source": "mock",
+            "latency_ms": round(latency_ms, 2),
+            "persona": persona,
+            "retries": retries,
+            "text_length": len(payload.text),
             **({"reason": reason} if reason else {}),
         },
     )
@@ -245,6 +314,7 @@ async def _stream_ollama_response(
         raise OllamaStreamError("Invalid XML payload from Ollama")
 
     latency_ms = (time.perf_counter() - start_time) * 1000
+    stats = _extract_stats(final_metadata)
     response = PolicyResponse(
         content=content,
         latency_ms=round(latency_ms, 2),
@@ -253,8 +323,21 @@ async def _stream_ollama_response(
         meta={
             "persona": persona,
             "model": DEFAULT_MODEL,
-            "stats": _extract_stats(final_metadata),
+            "stats": stats,
             "retries": attempt,
+        },
+    )
+    await _publish_policy_metric(
+        "policy.response",
+        {
+            "request_id": request_id,
+            "status": "ok",
+            "source": "ollama",
+            "latency_ms": round(latency_ms, 2),
+            "persona": persona,
+            "retries": attempt,
+            "text_length": len(payload.text),
+            "stats": stats,
         },
     )
     yield _format_sse("final", response.dict())
@@ -278,6 +361,10 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
     family_mode = _family_mode(payload)
     persona = _build_persona_snapshot(payload, family_mode)
     start = time.perf_counter()
+    prompt_guard = await MODERATION.guard_prompt(payload.text)
+    source = "mock" if POLICY_FORCE_MOCK else "ollama"
+    if not prompt_guard.allowed:
+        source = "moderation"
 
     yield _format_sse(
         "start",
@@ -285,14 +372,54 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
             "request_id": request_id,
             "model": DEFAULT_MODEL,
             "persona": persona,
-            "source": "mock" if POLICY_FORCE_MOCK else "ollama",
+            "source": source,
         },
     )
+
+    if not prompt_guard.allowed:
+        content = _wrap_safe_xml(prompt_guard.sanitized_text)
+        latency_ms = (time.perf_counter() - start) * 1000
+        response = PolicyResponse(
+            content=content,
+            latency_ms=round(latency_ms, 2),
+            source="moderation",
+            request_id=request_id,
+            meta={
+                "persona": persona,
+                "fallback": True,
+                "moderation": {"phase": "prompt", "reason": prompt_guard.reason},
+            },
+        )
+        await _publish_policy_metric(
+            "policy.response",
+            {
+                "request_id": request_id,
+                "status": "blocked",
+                "source": "moderation",
+                "latency_ms": round(latency_ms, 2),
+                "persona": persona,
+                "retries": 0,
+                "reason": prompt_guard.reason,
+                "text_length": len(payload.text),
+            },
+        )
+        yield _format_sse("final", response.dict())
+        return
 
     if POLICY_FORCE_MOCK:
         async for chunk in _stream_mock_response(
             payload, request_id, start, persona, reason=None, retries=0
         ):
+            event, data = _parse_sse(chunk)
+            if event == "final":
+                guard = await MODERATION.guard_response(data["content"])
+                if not guard.allowed:
+                    data["content"] = _wrap_safe_xml(guard.sanitized_text)
+                    data.setdefault("meta", {})["moderation"] = {
+                        "phase": "response",
+                        "reason": guard.reason,
+                    }
+                    chunk = _format_sse("final", data)
             yield chunk
         return
 
@@ -306,6 +433,16 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
             async for chunk in _stream_ollama_response(
                 payload, request_id, start, persona, family_mode, attempt
             ):
+                event, data = _parse_sse(chunk)
+                if event == "final":
+                    guard = await MODERATION.guard_response(data["content"])
+                    if not guard.allowed:
+                        data["content"] = _wrap_safe_xml(guard.sanitized_text)
+                        data.setdefault("meta", {})["moderation"] = {
+                            "phase": "response",
+                            "reason": guard.reason,
+                        }
+                        chunk = _format_sse("final", data)
                 yield chunk
             return
         except OllamaStreamError as exc:
@@ -338,6 +475,16 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
         reason=str(last_error) if last_error else None,
         retries=attempts_made + 1,
     ):
+        event, data = _parse_sse(chunk)
+        if event == "final":
+            guard = await MODERATION.guard_response(data["content"])
+            if not guard.allowed:
+                data["content"] = _wrap_safe_xml(guard.sanitized_text)
+                data.setdefault("meta", {})["moderation"] = {
+                    "phase": "response",
+                    "reason": guard.reason,
+                }
+                chunk = _format_sse("final", data)
         yield chunk
 
 

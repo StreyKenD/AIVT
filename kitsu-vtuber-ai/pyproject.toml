@@ -25,6 +25,8 @@ faster-whisper = "^1.0.0"
 numpy = "^1.26.4"
 sounddevice = "^0.4.7"
 pyaudio = "^0.2.14"
+TTS = "^0.22.0"
+pynvml = "^11.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
