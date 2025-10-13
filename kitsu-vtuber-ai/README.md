@@ -107,6 +107,7 @@ Mantenha essas referências sempre disponíveis ao compartilhar builds ou grava�
 - `POST /obs/scene`: altera a cena atual do OBS (stub).
 - `POST /vts/expr`: aplica expressão no avatar (stub).
 - `POST /ingest/chat`: registra mensagens do chat/assistente para alimentar a memória.
+- `POST /events/asr`: recebe eventos `asr_partial`/`asr_final` do worker de ASR e difunde pelo WebSocket.
 - `WS /stream`: difusão em tempo real dos eventos acima e das métricas simuladas.
 
 ## Memória
@@ -115,8 +116,10 @@ Mantenha essas referências sempre disponíveis ao compartilhar builds ou grava�
 - Exposto no `/status` sob `memory.current_summary` e `restore_context`.
 
 ## Política / LLM
-- `apps/policy_worker` consulta o Ollama (`OLLAMA_URL`) com o modelo padrão `llama3:8b-instruct-q4`.
-- Respostas seguem o formato XML `<speech/><mood/><actions/>`; fallback mock controlado por `POLICY_FORCE_MOCK=1` para ambientes offline.
+- `apps/policy_worker` consulta o Ollama (`OLLAMA_URL`) usando por padrão o modelo **Mixtral** (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`). Execute `ollama pull mixtral:8x7b-instruct-q4_K_M` antes do primeiro boot.
+- O endpoint `POST /respond` retorna um fluxo SSE (`text/event-stream`) com eventos `start`, `token`, `retry` e `final`. Cada `token` representa o streaming incremental dos trechos XML; o evento `final` inclui métricas (`latency_ms`, `stats`) e metadados da persona.
+- O prompt combina instruções de sistema + few-shots para reforçar o estilo kawaii/caótico, energia/nível de caos (`chaos_level`, `energy`) e modo familiar (`POLICY_FAMILY_FRIENDLY`).
+- O worker tenta reconectar/repetir (`POLICY_RETRY_ATTEMPTS`, `POLICY_RETRY_BACKOFF`) e, em caso de falha ou resposta inválida, volta ao mock amistoso (`POLICY_FORCE_MOCK=1` ou fallback automático), preservando o formato `<speech/><mood/><actions/>`.
 
 ## Próximos Passos
 - Integrar memória persistente e sumarização.
