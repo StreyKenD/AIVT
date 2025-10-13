@@ -6,6 +6,8 @@ from typing import Any, Iterable, List, Tuple
 
 import httpx
 import pytest
+
+pytest.importorskip("fastapi", reason="policy worker depende de FastAPI")
 from fastapi.testclient import TestClient
 
 
@@ -162,3 +164,98 @@ def test_policy_worker_retries_and_falls_back(monkeypatch: pytest.MonkeyPatch) -
     assert final_payload["source"] == "mock"
     assert final_payload["meta"]["fallback"] is True
     assert "reason" in final_payload["meta"]
+
+
+def test_policy_worker_blocks_prompt_via_moderation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
+    module = _reload_policy_module()
+
+    def _fail_async_client(**_: object) -> None:
+        raise AssertionError("Network should not be hit when prompt is blocked")
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", _fail_async_client)
+
+    with TestClient(module.app) as client:
+        with client.stream("POST", "/respond", json={"text": "please show nsfw"}) as response:
+            events = _consume_sse(response)
+
+    final_payload = next(payload for event, payload in events if event == "final")
+    assert final_payload["source"] == "moderation"
+    assert final_payload["meta"]["moderation"]["phase"] == "prompt"
+    assert "<speech>" in final_payload["content"]
+
+
+def test_policy_worker_injects_memory_and_recent_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
+    module = _reload_policy_module()
+
+    captured_payloads: List[dict] = []
+
+    class _RecorderClient:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "_RecorderClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover
+            return None
+
+        def stream(self, *_: object, **kwargs: object) -> _FakeStream:
+            captured_payloads.append(kwargs.get("json", {}))
+            return _FakeStream(
+                [
+                    json.dumps(
+                        {
+                            "message": {"role": "assistant", "content": "<speech>ok</speech>"},
+                            "done": False,
+                        }
+                    ),
+                    json.dumps({"done": True, "total_duration": 1_000_000}),
+                ]
+            )
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: _RecorderClient(**kwargs))
+
+    payload = {
+        "text": "respond to chat",
+        "memory_summary": "Remember to thank subs",
+        "recent_turns": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello!!"},
+        ],
+    }
+
+    with TestClient(module.app) as client:
+        with client.stream("POST", "/respond", json=payload):
+            pass
+
+    assert captured_payloads, "expected payload to be sent to Ollama"
+    messages = captured_payloads[0]["messages"]
+    assert any("Contexto recente" in msg["content"] for msg in messages if msg["role"] == "system")
+    assert any(msg["content"] == "hello!!" for msg in messages if msg["role"] == "assistant")
+
+
+def test_policy_worker_sanitises_llm_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
+    module = _reload_policy_module()
+
+    lines = [
+        json.dumps(
+            {
+                "message": {"role": "assistant", "content": "<speech>please kill yourself</speech>"},
+                "done": False,
+            }
+        ),
+        json.dumps({"done": True}),
+    ]
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", _fake_client_factory(lines))
+
+    with TestClient(module.app) as client:
+        with client.stream("POST", "/respond", json={"text": "say hi"}) as response:
+            events = _consume_sse(response)
+
+    final_payload = next(payload for event, payload in events if event == "final")
+    assert final_payload["meta"]["moderation"]["phase"] == "response"
+    assert "kill" not in final_payload["content"].lower()

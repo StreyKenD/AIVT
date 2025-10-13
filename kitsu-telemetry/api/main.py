@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query, status
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, validator
@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field, validator
 from . import storage
 
 _DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173"
+_API_KEY = os.getenv("TELEMETRY_API_KEY")
+_RETENTION_SECONDS = int(os.getenv("TELEMETRY_RETENTION_SECONDS", "0") or 0)
 
 
 class TelemetryEventIn(BaseModel):
@@ -64,6 +66,13 @@ class TelemetryOut(BaseModel):
     @classmethod
     def from_storage(cls, event: storage.TelemetryEvent) -> "TelemetryOut":
         return cls(type=event.type, ts=event.ts, payload=event.payload)
+
+
+async def _require_api_key(x_api_key: str | None = Header(None)) -> None:
+    if not _API_KEY:
+        return
+    if x_api_key != _API_KEY:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key inválida")
 
 
 def _load_allowed_origins() -> list[str]:
@@ -135,7 +144,10 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/events", response_model=dict[str, Any])
-async def ingest_event(payload: Any = Body(...)) -> dict[str, Any]:
+async def ingest_event(
+    payload: Any = Body(...),
+    _: None = Depends(_require_api_key),
+) -> dict[str, Any]:
     events = _normalize_events(payload)
     ids: list[int] = []
     for event in events:
@@ -147,6 +159,9 @@ async def ingest_event(payload: Any = Body(...)) -> dict[str, Any]:
         )
         event_id = await storage.insert_event(telemetry)
         ids.append(event_id)
+
+    if _RETENTION_SECONDS:
+        await storage.prune_events(_RETENTION_SECONDS)
 
     if len(ids) == 1:
         return {"id": ids[0]}
@@ -160,6 +175,7 @@ async def get_events(
     type_: str | None = Query(None, alias="type"),
     event_type: str | None = None,
     source: str | None = None,
+    _: None = Depends(_require_api_key),
 ) -> list[TelemetryOut]:
     effective_type = type_ or event_type
     events = await storage.list_events(limit=limit, event_type=effective_type, source=source)
@@ -167,10 +183,27 @@ async def get_events(
 
 
 @app.get("/events/export")
-async def export_events() -> StreamingResponse:
+async def export_events(_: None = Depends(_require_api_key)) -> StreamingResponse:
     async def csv_generator():
         async for chunk in storage.stream_events_as_csv():
             yield chunk
 
     headers = {"Content-Disposition": "attachment; filename=telemetry_events.csv"}
     return StreamingResponse(csv_generator(), media_type="text/csv", headers=headers)
+
+
+@app.get("/metrics/latest", response_model=dict[str, Any])
+async def latest_metrics(
+    window_seconds: int = Query(300, ge=60, le=7200),
+    _: None = Depends(_require_api_key),
+) -> dict[str, Any]:
+    return await storage.latest_metrics(window_seconds=window_seconds)
+
+
+@app.post("/maintenance/prune", response_model=dict[str, Any])
+async def manual_prune(
+    max_age_seconds: int = Query(3600, ge=60),
+    _: None = Depends(_require_api_key),
+) -> dict[str, Any]:
+    removed = await storage.prune_events(max_age_seconds)
+    return {"removed": removed}

@@ -23,16 +23,20 @@ Crie o arquivo `.env` (API) a partir de `.env.example` e ajuste os valores confo
 API_HOST=127.0.0.1
 API_PORT=8001
 TELEMETRY_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+TELEMETRY_DB_PATH=./telemetry.db
+TELEMETRY_API_KEY=dev-secret
+TELEMETRY_RETENTION_SECONDS=14400
 ```
 
-Para a UI, copie `ui/.env.example` para `ui/.env.local` mantendo alinhamento com o orquestrador (`kitsu-vtuber-ai`):
+Para a UI, copie `ui/.env.example` para `ui/.env.local` mantendo alinhamento com o orquestrador (`kitsu-vtuber-ai`) e com o backend de controle:
 
 ```
 PUBLIC_ORCH_BASE_URL=http://127.0.0.1:8000
 PUBLIC_ORCH_WS_URL=ws://127.0.0.1:8000
+PUBLIC_CONTROL_BASE_URL=http://127.0.0.1:8100
 ```
 
-> Garanta que `ORCH_HOST`, `ORCH_PORT` e `ORCH_CORS_ALLOW_ORIGINS` estejam configurados no repositório `kitsu-vtuber-ai` com valores compatíveis. O cliente adiciona `/stream` automaticamente ao `PUBLIC_ORCH_WS_URL`.
+> Garanta que `ORCH_HOST`, `ORCH_PORT` e `ORCH_CORS_ALLOW_ORIGINS` estejam configurados no repositório `kitsu-vtuber-ai` com valores compatíveis. O cliente adiciona `/stream` automaticamente ao `PUBLIC_ORCH_WS_URL` e utiliza `PUBLIC_CONTROL_BASE_URL` para acionar o backend de controle.
 
 ## 4. Rodar API e UI
 Abra dois terminais ou sessões:
@@ -47,13 +51,16 @@ pnpm dev -- --host 127.0.0.1 --port 5173
 ```
 
 Acesse `http://localhost:5173` e confirme:
-- Indicador de status do orquestrador em **verde** (requisição `GET /status` bem-sucedida).
+- Indicador de status do orquestrador em **verde** (requisição `GET /status` via backend de controle).
 - Eventos em tempo real fluindo no painel após ações (WebSocket conectado).
-- Roteamento de métricas para `POST /events` funcionando (verifique os dados na aba de histórico).
+- Cartões e gráficos de latência atualizando via `GET /metrics/latest`.
+- Exportação CSV disponível (botão **Exportar CSV**) e resultados do soak test listados.
+- Comandos de pânico/mute/preset respondendo no orquestrador (verifique os eventos no log).
 
 ## 5. Testes rápidos
 Valide os endpoints periodicamente:
 ```bash
+poetry lock --check
 poetry run pytest -q
 ```
 > Alternativa com `pip`: `python -m pip install pytest httpx` seguido de `python -m pytest -q`.

@@ -1,23 +1,33 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { createTelemetryStream, type TelemetryMessage } from '$lib/ws';
   import {
     ApiError,
+    applyPreset,
+    downloadTelemetryCsv,
+    fetchLatestMetrics,
+    fetchSoakResults,
     getStatus,
     requestTTS,
+    setGlobalMute,
     setOBSScene,
     setPersona,
     setVTSExpression,
+    triggerPanic,
     toggleModule,
     type ExpressionSnapshot,
+    type LatestMetrics,
     type MemorySummary,
     type ModuleStatus,
     type OrchestratorStatus,
     type PersonaSnapshot,
+    type SoakResult,
     type TTSRecord
   } from '$lib/api';
+  import LatencyChart, { type LatencyPoint } from '$lib/LatencyChart.svelte';
 
   const telemetry = createTelemetryStream();
+  const currentYear = new Date().getFullYear();
 
   const personaStyles = ['kawaii', 'chaotic', 'calm'] as const;
 
@@ -31,6 +41,8 @@
   type FeedbackState = { type: 'success' | 'error'; text: string } | null;
 
   type ExpressionOption = { label: string; value: string; intensity: number };
+  type LatencySeries = Record<string, LatencyPoint[]>;
+  type ControlState = NonNullable<OrchestratorStatus['control']>;
 
   const expressionOptions: ExpressionOption[] = [
     { label: 'Sorriso', value: 'smile', intensity: 0.7 },
@@ -39,6 +51,24 @@
     { label: 'Pensativa', value: 'thinking', intensity: 0.6 },
     { label: 'Sonolenta', value: 'sleepy', intensity: 0.4 }
   ];
+
+  const presetOptions = [
+    { value: 'default', label: 'Default', description: 'Equilíbrio kawaii (50% energia)' },
+    { value: 'cozy', label: 'Cozy', description: 'Tom calmo para segmentos de conversa íntima' },
+    { value: 'hype', label: 'Hype', description: 'Energia máxima para anúncios e raids' }
+  ];
+
+  const latencySeries: LatencySeries = {
+    asr_worker: [],
+    policy_worker: [],
+    tts_worker: []
+  };
+  const LATENCY_MAX_POINTS = 24;
+  const latencyColors: Record<string, string> = {
+    asr_worker: '#60a5fa',
+    policy_worker: '#facc15',
+    tts_worker: '#34d399'
+  };
 
   let orchestrator: OrchestratorStatus | null = null;
   let modulePending: Record<string, boolean> = {};
@@ -50,19 +80,51 @@
   let sceneSubmitting = false;
   let ttsSubmitting = false;
   let expressionPending = false;
+  let controlState: ControlState = {
+    tts_muted: false,
+    panic_at: null,
+    panic_reason: null,
+    active_preset: 'default'
+  };
+  let panicReason = '';
   let loadingStatus = true;
   let refreshing = false;
   let loadError = '';
   let feedback: FeedbackState = null;
+  let mutePending = false;
+  let panicPending = false;
+  let presetPending: string | null = null;
+  let csvPending = false;
+
+  let metrics: LatestMetrics | null = null;
+  let metricsError = '';
+  let metricsLoading = true;
+  let soakResults: SoakResult[] = [];
+  let soakLoading = true;
+  let soakError = '';
+
+  let metricsTimer: ReturnType<typeof setInterval> | null = null;
+  let soakTimer: ReturnType<typeof setInterval> | null = null;
 
   onMount(() => {
     const unsubscribe = telemetry.subscribe(handleTelemetry);
     void fetchStatus(true);
+    void refreshMetrics(true);
+    void refreshSoak(true);
+    metricsTimer = setInterval(() => void refreshMetrics(false), 5000);
+    soakTimer = setInterval(() => void refreshSoak(false), 20000);
 
     return () => {
       unsubscribe();
       telemetry.disconnect();
+      if (metricsTimer) clearInterval(metricsTimer);
+      if (soakTimer) clearInterval(soakTimer);
     };
+  });
+
+  onDestroy(() => {
+    if (metricsTimer) clearInterval(metricsTimer);
+    if (soakTimer) clearInterval(soakTimer);
   });
 
   async function fetchStatus(initial = false, showNotice = false) {
@@ -148,6 +210,24 @@
         };
         break;
       }
+      case 'control.mute': {
+        controlState = { ...controlState, tts_muted: Boolean(message.muted) };
+        modulePending = { ...modulePending, tts_worker: false };
+        break;
+      }
+      case 'control.panic': {
+        controlState = {
+          ...controlState,
+          panic_at: message.ts ?? Date.now() / 1000,
+          panic_reason: 'reason' in message ? (message as { reason?: string }).reason ?? null : null
+        };
+        break;
+      }
+      case 'control.preset': {
+        const presetName = (message as { preset?: string }).preset ?? controlState.active_preset;
+        controlState = { ...controlState, active_preset: presetName };
+        break;
+      }
       case 'expression': {
         const synthetic: ExpressionSnapshot = {
           expression: message.data.expression,
@@ -172,6 +252,7 @@
     sceneSubmitting = false;
     ttsSubmitting = false;
     personaSubmitting = false;
+    controlState = cloneControl(cloned.control);
   }
 
   function cloneStatus(snapshot: OrchestratorStatus): OrchestratorStatus {
@@ -188,7 +269,8 @@
         current_summary: snapshot.memory.current_summary
           ? cloneSummary(snapshot.memory.current_summary)
           : null
-      }
+      },
+      control: snapshot.control ? cloneControl(snapshot.control) : undefined
     };
   }
 
@@ -211,6 +293,18 @@
     };
   }
 
+  function cloneControl(control: OrchestratorStatus['control']): ControlState {
+    if (!control) {
+      return {
+        tts_muted: false,
+        panic_at: null,
+        panic_reason: null,
+        active_preset: 'default'
+      };
+    }
+    return { ...control };
+  }
+
   function toPersonaForm(persona: PersonaSnapshot): PersonaFormState {
     return {
       style: persona.style,
@@ -230,9 +324,70 @@
     return fallback;
   }
 
+  function updateLatencySeries(latest: LatestMetrics) {
+    const now = Date.now();
+    (['asr_worker', 'policy_worker', 'tts_worker'] as const).forEach((key) => {
+      const bucket = latest.metrics[key];
+      if (!bucket || !bucket.latency_ms || typeof bucket.latency_ms.avg !== 'number') {
+        return;
+      }
+      const series = latencySeries[key];
+      series.push({ ts: now, value: bucket.latency_ms.avg });
+      if (series.length > LATENCY_MAX_POINTS) {
+        series.splice(0, series.length - LATENCY_MAX_POINTS);
+      }
+    });
+  }
+
+  function getLatencySnapshot(key: keyof LatencySeries): number | null {
+    const series = latencySeries[key];
+    if (!series.length) return null;
+    return series[series.length - 1].value;
+  }
+
+  function formatRelativeTimestamp(ts: number | null | undefined): string {
+    if (!ts || Number.isNaN(ts)) return 'n/d';
+    const millis = ts > 1_000_000_000_000 ? ts : ts * 1000;
+    return new Date(millis).toLocaleString();
+  }
+
   async function refreshStatus() {
     if (loadingStatus || refreshing) return;
     await fetchStatus(false, true);
+  }
+
+  async function refreshMetrics(initial = false) {
+    if (initial) {
+      metricsLoading = true;
+    }
+    metricsError = '';
+    try {
+      const latest = await fetchLatestMetrics();
+      metrics = latest;
+      updateLatencySeries(latest);
+    } catch (error) {
+      metricsError = getErrorMessage(error, 'Falha ao carregar métricas.');
+    } finally {
+      if (initial) {
+        metricsLoading = false;
+      }
+    }
+  }
+
+  async function refreshSoak(initial = false) {
+    if (initial) {
+      soakLoading = true;
+    }
+    soakError = '';
+    try {
+      soakResults = await fetchSoakResults(10);
+    } catch (error) {
+      soakError = getErrorMessage(error, 'Falha ao carregar resultados do soak test.');
+    } finally {
+      if (initial) {
+        soakLoading = false;
+      }
+    }
   }
 
   async function handleModuleToggle(module: string, enabled: boolean) {
@@ -351,6 +506,77 @@
     }
   }
 
+  async function toggleMuteState() {
+    if (mutePending) return;
+    const target = !controlState.tts_muted;
+    mutePending = true;
+    try {
+      await setGlobalMute(target);
+      controlState = { ...controlState, tts_muted: target };
+      setFeedback('success', target ? 'TTS silenciado.' : 'TTS reativado.');
+    } catch (error) {
+      setFeedback('error', getErrorMessage(error, 'Não foi possível alternar mute.'));
+    } finally {
+      mutePending = false;
+    }
+  }
+
+  async function sendPanic() {
+    if (panicPending) return;
+    panicPending = true;
+    try {
+      const response = await triggerPanic(panicReason);
+      controlState = {
+        ...controlState,
+        panic_at: typeof response.ts === 'number' ? response.ts : Date.now() / 1000,
+        panic_reason:
+          typeof response.reason === 'string' && response.reason.trim() ? response.reason : panicReason.trim() || null
+      };
+      panicReason = '';
+      setFeedback('success', 'Modo pânico acionado.');
+    } catch (error) {
+      setFeedback('error', getErrorMessage(error, 'Não foi possível disparar o pânico.'));
+    } finally {
+      panicPending = false;
+    }
+  }
+
+  async function applyPresetAction(preset: string) {
+    if (presetPending) return;
+    presetPending = preset;
+    try {
+      await applyPreset(preset);
+      controlState = { ...controlState, active_preset: preset };
+      setFeedback('success', `Preset ${preset} aplicado.`);
+      await fetchStatus(false);
+    } catch (error) {
+      setFeedback('error', getErrorMessage(error, 'Não foi possível aplicar o preset.'));
+    } finally {
+      presetPending = null;
+    }
+  }
+
+  async function downloadCsvExport() {
+    if (csvPending) return;
+    csvPending = true;
+    try {
+      const blob = await downloadTelemetryCsv();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `telemetry-${new Date().toISOString()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setFeedback('success', 'CSV exportado com sucesso.');
+    } catch (error) {
+      setFeedback('error', getErrorMessage(error, 'Falha ao exportar CSV.'));
+    } finally {
+      csvPending = false;
+    }
+  }
+
   function formatTimestamp(ts: number | null | undefined): string {
     if (typeof ts !== 'number' || !Number.isFinite(ts)) {
       return 'n/d';
@@ -419,7 +645,7 @@
         </button>
       </div>
     {:else if orchestrator}
-      <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Resumo rapido">
+      <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Resumo rapido">
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
           <h2 class="text-xs uppercase text-slate-400">Persona</h2>
           <p class="text-2xl font-semibold capitalize">{orchestrator.persona.style}</p>
@@ -455,6 +681,133 @@
           {#if orchestrator.last_tts}
             <p class="mt-2 text-xs text-slate-500">Voz: {orchestrator.last_tts.voice ?? 'auto'}</p>
             <p class="text-xs text-slate-500">Emitido {formatTimestamp(orchestrator.last_tts.ts)}</p>
+          {/if}
+        </div>
+        <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
+          <h2 class="text-xs uppercase text-slate-400">Operação</h2>
+          <p class="text-lg font-semibold capitalize">Preset {controlState.active_preset}</p>
+          <p class="mt-2 text-xs text-slate-500">
+            TTS {controlState.tts_muted ? 'mutado' : 'ativo'}
+          </p>
+          <p class="text-xs text-slate-500">
+            Último pânico {formatRelativeTimestamp(controlState.panic_at)}
+          </p>
+        </div>
+      </section>
+
+      <section class="rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow" aria-label="Telemetria em tempo real">
+        <header class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 class="text-lg font-medium">Telemetria em tempo real</h2>
+            <p class="text-xs text-slate-400">Latências agregadas por estágio e visão do soak test.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              class="rounded-lg bg-slate-800 px-4 py-2 text-xs font-semibold hover:bg-slate-700 disabled:opacity-60"
+              on:click={() => refreshMetrics(false)}
+              disabled={metricsLoading}
+            >
+              {metricsLoading ? 'Carregando...' : 'Atualizar métricas'}
+            </button>
+            <button
+              class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-emerald-950 hover:bg-emerald-400 disabled:opacity-60"
+              on:click={downloadCsvExport}
+              disabled={csvPending}
+            >
+              {csvPending ? 'Gerando CSV...' : 'Exportar CSV'}
+            </button>
+          </div>
+        </header>
+
+        {#if metricsLoading}
+          <p class="mt-4 text-sm text-slate-400" aria-live="polite">Carregando métricas...</p>
+        {:else if metricsError}
+          <div class="mt-4 rounded border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
+            {metricsError}
+          </div>
+        {:else if metrics}
+          <div class="mt-4 grid gap-4 lg:grid-cols-3">
+            <LatencyChart
+              title="ASR"
+              points={latencySeries.asr_worker}
+              accent={latencyColors.asr_worker}
+            />
+            <LatencyChart
+              title="Policy/LLM"
+              points={latencySeries.policy_worker}
+              accent={latencyColors.policy_worker}
+            />
+            <LatencyChart
+              title="TTS"
+              points={latencySeries.tts_worker}
+              accent={latencyColors.tts_worker}
+            />
+          </div>
+          <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
+              <p class="font-semibold text-slate-200">ASR</p>
+              <p>Eventos: {metrics.metrics.asr_worker?.count ?? 0}</p>
+              <p>Latência média: {getLatencySnapshot('asr_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+            </div>
+            <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
+              <p class="font-semibold text-slate-200">Policy</p>
+              <p>Eventos: {metrics.metrics.policy_worker?.count ?? 0}</p>
+              <p>Latência média: {getLatencySnapshot('policy_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+            </div>
+            <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
+              <p class="font-semibold text-slate-200">TTS</p>
+              <p>Eventos: {metrics.metrics.tts_worker?.count ?? 0}</p>
+              <p>Latência média: {getLatencySnapshot('tts_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+            </div>
+          </div>
+        {/if}
+
+        <div class="mt-6 border-t border-white/5 pt-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-slate-200">Resultados do soak test</h3>
+            <button
+              class="rounded bg-slate-800 px-3 py-1.5 text-xs font-semibold hover:bg-slate-700 disabled:opacity-60"
+              on:click={() => refreshSoak(false)}
+              disabled={soakLoading}
+            >
+              {soakLoading ? 'Carregando...' : 'Atualizar' }
+            </button>
+          </div>
+          {#if soakLoading && !soakResults.length}
+            <p class="mt-3 text-xs text-slate-400" aria-live="polite">Carregando histórico de soak...</p>
+          {:else if soakError}
+            <div class="mt-3 rounded border border-red-500/50 bg-red-500/10 p-3 text-xs text-red-200" role="alert">
+              {soakError}
+            </div>
+          {:else if soakResults.length}
+            <div class="mt-3 overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-800 text-left text-xs">
+                <thead class="bg-slate-950/60 text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2 font-semibold">Data</th>
+                    <th class="px-3 py-2 font-semibold">Status</th>
+                    <th class="px-3 py-2 font-semibold">Detalhes</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-900/80 text-slate-200">
+                  {#each soakResults as result}
+                    <tr>
+                      <td class="px-3 py-2 whitespace-nowrap">{new Date(result.ts).toLocaleString()}</td>
+                      <td class="px-3 py-2">
+                        {result.payload.success ? '✅ Sucesso' : '⚠️ Falha'}
+                      </td>
+                      <td class="px-3 py-2">
+                        <code class="rounded bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300">
+                          {JSON.stringify(result.payload)}
+                        </code>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <p class="mt-3 text-xs text-slate-400">Nenhum resultado registrado ainda.</p>
           {/if}
         </div>
       </section>
@@ -554,6 +907,70 @@
         </div>
 
         <aside class="flex flex-col gap-6">
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Controles de segurança">
+            <h2 class="text-lg font-medium">Segurança</h2>
+            <p class="mt-1 text-xs text-slate-400">
+              Estado: {controlState.tts_muted ? 'TTS mutado' : 'TTS ativo'} &middot; Preset {controlState.active_preset}
+            </p>
+            <button
+              class={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                controlState.tts_muted
+                  ? 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400'
+                  : 'bg-amber-500 text-amber-950 hover:bg-amber-400'
+              } disabled:opacity-60`}
+              type="button"
+              on:click={toggleMuteState}
+              disabled={mutePending}
+            >
+              {controlState.tts_muted ? 'Desmutar TTS' : 'Mutar TTS'}
+            </button>
+
+            <div class="mt-4 space-y-2" aria-label="Pânico">
+              <label class="flex flex-col gap-1 text-xs font-medium text-slate-300">
+                Mensagem opcional
+                <textarea
+                  class="min-h-[60px] rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  bind:value={panicReason}
+                  aria-label="Motivo do pânico"
+                />
+              </label>
+              <button
+                class="w-full rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-red-950 transition hover:bg-red-400 disabled:opacity-60"
+                type="button"
+                on:click={sendPanic}
+                disabled={panicPending}
+              >
+                {panicPending ? 'Acionando...' : 'Acionar pânico'}
+              </button>
+              <p class="text-[11px] text-slate-500">
+                Último pânico: {formatRelativeTimestamp(controlState.panic_at)}
+              </p>
+            </div>
+
+            <div class="mt-5 space-y-2">
+              <h3 class="text-sm font-semibold text-slate-200">Presets de persona</h3>
+              <ul class="space-y-2">
+                {#each presetOptions as preset}
+                  <li>
+                    <button
+                      class={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+                        controlState.active_preset === preset.value
+                          ? 'border-emerald-400 bg-emerald-400/20 text-emerald-100'
+                          : 'border-white/10 bg-slate-950/50 text-slate-200 hover:bg-slate-800'
+                      } disabled:opacity-60`}
+                      type="button"
+                      on:click={() => applyPresetAction(preset.value)}
+                      disabled={presetPending !== null}
+                    >
+                      <span class="block font-semibold">{preset.label}</span>
+                      <span class="block text-xs text-slate-400">{preset.description}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          </article>
+
           <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Configurar persona">
             <h2 class="text-lg font-medium">Persona</h2>
             <form class="mt-4 space-y-4" on:submit|preventDefault={submitPersona}>
@@ -661,6 +1078,12 @@
         </aside>
       </section>
     {/if}
+    <footer class="mt-10 border-t border-white/10 pt-4 text-[11px] text-slate-500" aria-label="Atribuições e licenças">
+      <p class="font-medium">© {currentYear} Kitsu.exe · Uso interno.</p>
+      <p class="mt-1">
+        Licenças obrigatórias: Llama 3 8B Instruct (Meta), Coqui-TTS e Avatar Live2D “Lumi”. Consulte `licenses/third_party/` no repositório.
+      </p>
+    </footer>
   </div>
 </div>
 

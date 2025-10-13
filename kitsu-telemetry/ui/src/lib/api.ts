@@ -1,7 +1,15 @@
 import { env as publicEnv } from '$env/dynamic/public';
 
 const DEFAULT_ORCH_BASE_URL = 'http://localhost:8000';
-const ORCH_BASE_URL = sanitizeBaseUrl(publicEnv.PUBLIC_ORCH_BASE_URL ?? DEFAULT_ORCH_BASE_URL);
+const ORCH_BASE_URL = sanitizeBaseUrl(
+  publicEnv.PUBLIC_ORCH_BASE_URL ?? DEFAULT_ORCH_BASE_URL,
+  DEFAULT_ORCH_BASE_URL
+);
+const DEFAULT_CONTROL_BASE_URL = 'http://localhost:8100';
+const CONTROL_BASE_URL = sanitizeBaseUrl(
+  publicEnv.PUBLIC_CONTROL_BASE_URL ?? DEFAULT_CONTROL_BASE_URL,
+  DEFAULT_CONTROL_BASE_URL
+);
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
@@ -44,6 +52,14 @@ export type OrchestratorStatus = {
   last_tts: TTSRecord | null;
   memory: MemorySnapshot;
   restore_context: boolean;
+  control?: ControlSnapshot;
+};
+
+export type ControlSnapshot = {
+  tts_muted: boolean;
+  panic_at: number | null;
+  panic_reason: string | null;
+  active_preset: string;
 };
 
 export type ExpressionSnapshot = {
@@ -98,6 +114,24 @@ export type VTSExpressionResponse = {
   data: ExpressionSnapshot;
 };
 
+export type LatestMetrics = {
+  window_seconds: number;
+  metrics: Record<
+    string,
+    {
+      count: number;
+      failures?: number;
+      latency_ms?: { avg?: number; max?: number; min?: number };
+    }
+  >;
+};
+
+export type SoakResult = {
+  ts: string;
+  type: string;
+  payload: Record<string, JsonValue>;
+};
+
 export async function getStatus(): Promise<OrchestratorStatus> {
   return apiRequest<OrchestratorStatus>('/status');
 }
@@ -135,6 +169,46 @@ export async function setVTSExpression(payload: VTSExpressionPayload): Promise<V
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export async function triggerPanic(reason?: string): Promise<JsonObject> {
+  return controlRequest<JsonObject>('/control/panic', {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason?.trim() || null })
+  });
+}
+
+export async function setGlobalMute(muted: boolean): Promise<JsonObject> {
+  return controlRequest<JsonObject>('/control/mute', {
+    method: 'POST',
+    body: JSON.stringify({ muted })
+  });
+}
+
+export async function applyPreset(preset: string): Promise<JsonObject> {
+  return controlRequest<JsonObject>('/control/preset', {
+    method: 'POST',
+    body: JSON.stringify({ preset })
+  });
+}
+
+export async function fetchLatestMetrics(windowSeconds = 300): Promise<LatestMetrics> {
+  const search = new URLSearchParams({ window_seconds: String(windowSeconds) });
+  return controlRequest<LatestMetrics>(`/metrics/latest?${search.toString()}`);
+}
+
+export async function fetchSoakResults(limit = 10): Promise<SoakResult[]> {
+  const search = new URLSearchParams({ limit: String(limit) });
+  const response = await controlRequest<{ items: SoakResult[] }>(`/soak/results?${search}`);
+  return response.items;
+}
+
+export async function downloadTelemetryCsv(): Promise<Blob> {
+  const response = await controlFetch('/telemetry/export', { method: 'GET' });
+  if (!response.ok) {
+    throw new ApiError(`Falha no download (${response.status})`, response.status);
+  }
+  return await response.blob();
 }
 
 class ApiError extends Error {
@@ -175,6 +249,34 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return parsed as T;
 }
 
+async function controlRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await controlFetch(path, init);
+
+  let parsed: JsonValue | undefined;
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    parsed = (await response.json()) as JsonValue;
+  }
+
+  if (!response.ok) {
+    const message =
+      typeof parsed === 'object' && parsed !== null && 'detail' in parsed
+        ? String((parsed as Record<string, unknown>).detail ?? 'Falha na requisição')
+        : `Falha na requisição (${response.status})`;
+    throw new ApiError(message, response.status, parsed);
+  }
+
+  return parsed as T;
+}
+
+async function controlFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = `${CONTROL_BASE_URL}${path}`;
+  return fetch(url, {
+    headers: buildHeaders(init.headers),
+    ...init
+  });
+}
+
 function buildHeaders(headers: HeadersInit | undefined): HeadersInit {
   const existing = new Headers(headers);
   if (!existing.has('Content-Type')) {
@@ -186,9 +288,9 @@ function buildHeaders(headers: HeadersInit | undefined): HeadersInit {
   return existing;
 }
 
-function sanitizeBaseUrl(url: string): string {
+function sanitizeBaseUrl(url: string, fallback: string): string {
   if (!url) {
-    return DEFAULT_ORCH_BASE_URL;
+    return fallback;
   }
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }

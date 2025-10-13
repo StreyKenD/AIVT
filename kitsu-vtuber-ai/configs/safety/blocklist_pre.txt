@@ -1,0 +1,6 @@
+# Terms bloqueados antes de chegar ao LLM
+nsfw
+kys
+suicide
+slur1
+slur2

@@ -13,8 +13,10 @@ from typing import AsyncIterator, Callable, Dict, List, Optional, Protocol
 
 import httpx
 
+from libs.common import configure_json_logging
+
+configure_json_logging("asr_worker")
 logger = logging.getLogger("kitsu.asr")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 
 @dataclass(frozen=True)
