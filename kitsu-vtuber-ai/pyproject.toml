@@ -29,9 +29,13 @@ ruff = "^0.4.7"
 black = "^24.4.2"
 mypy = "^1.10.0"
 pre-commit = "^3.7.0"
+isort = "^5.13.2"
 
 [tool.mypy]
 ignore_missing_imports = true
+
+[tool.isort]
+profile = "black"
 
 [build-system]
 requires = ["poetry-core>=1.6.0"]

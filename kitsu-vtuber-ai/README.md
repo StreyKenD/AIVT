@@ -36,18 +36,35 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
    ```bash
    poetry run uvicorn apps.control_panel_backend.main:app --reload
    ```
-5. (Opcional) Suba todos os workers (incluindo o novo orquestrador e os stubs) em paralelo via PowerShell:
-   ```powershell
-   scripts/run_all.ps1
-   ```
-
-6. Para inspecionar o orquestrador (FastAPI + WebSocket):
+5. Para inspecionar o orquestrador (FastAPI + WebSocket):
    ```bash
    poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
    curl http://${ORCH_HOST:-127.0.0.1}:${ORCH_PORT:-8000}/status
    ```
 
 > **Atribuição**: O modelo LLM padrão é **Llama 3 8B Instruct** servido pelo Ollama.
+
+### Como rodar sem Docker (Windows)
+
+1. Instale o [Python 3.11](https://www.python.org/downloads/windows/) (habilite "Add python.exe to PATH") e o [Poetry](https://python-poetry.org/docs/).
+2. Clone o repositório, abra **PowerShell 7+ (pwsh)** e configure o ambiente virtual:
+   ```powershell
+   poetry env use 3.11
+   poetry install
+   ```
+3. Copie o arquivo de variáveis: `Copy-Item .env.example .env` e edite as credenciais (Twitch OAuth, OBS, VTS etc.).
+4. Opcional porém recomendado: instale os hooks locais com `poetry run pre-commit install` para ativar `ruff`, `black`, `isort` e `mypy` antes dos commits.
+5. Use os scripts de automação em `scripts/` para iniciar ou encerrar cada serviço individualmente:
+   ```powershell
+   pwsh scripts/run_orchestrator.ps1 -Action start   # inicia o orquestrador (FastAPI)
+   pwsh scripts/run_asr.ps1 -Action status           # verifica o worker de ASR
+   pwsh scripts/run_tts.ps1 -Action stop             # encerra o worker de TTS
+   ```
+6. Para subir tudo de uma vez (sem Docker), execute:
+   ```powershell
+   pwsh scripts/run_all_no_docker.ps1 -Action start
+   ```
+   Utilize `-Action stop` para derrubar todos os serviços ou `-Action status` para conferir os PIDs ativos.
 
 ## Variáveis de ambiente essenciais
 As variáveis abaixo controlam como o orquestrador expõe seus endpoints HTTP/WebSocket e como os eventos são encaminhados para o módulo de telemetria:
