@@ -204,7 +204,4 @@ def _parse_json(response: httpx.Response) -> Any:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=exc.response.status_code, detail=exc.message)
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=500, detail="Resposta inesperada do serviço")
-    return payload
+    return response.json()
