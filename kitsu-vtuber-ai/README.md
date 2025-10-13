@@ -36,22 +36,7 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
    ```bash
    poetry run uvicorn apps.control_panel_backend.main:app --reload
    ```
-5. (Opcional) Suba todos os workers (incluindo o novo orquestrador e os stubs) em paralelo via PowerShell:
-   ```powershell
-   scripts/run_all.ps1
-   ```
-
-   Helpers individuais (`scripts/run_*.ps1`, quando presentes) delegam o ciclo de vida dos serviços para `scripts/service_manager.ps1`. O gerenciador grava o PID **do worker real** (por exemplo `python.exe`/`uvicorn.exe`) em `.pids/<serviço>.pid`, procurando de forma recursiva pelos descendentes do wrapper (`poetry`, `pwsh`, etc.) imediatamente após o `Start-Process`. Assim, o comando `stop` encerra o worker certo antes de limpar o arquivo de PID. Se algum serviço spawnar múltiplos filhos, passe pistas adicionais com `-ChildProcessNames` no helper correspondente para facilitar a resolução:
-
-   ```powershell
-   scripts/service_manager.ps1 start orchestrator `
-       -Command "poetry run uvicorn apps.orchestrator.main:app --reload" `
-       -ChildProcessNames @('python', 'uvicorn')
-   ```
-
-   Com isso, `scripts/service_manager.ps1 stop orchestrator` derruba o PID persistido (worker) e, se necessário, faz fallback para o processo pai sem deixar shims órfãos.
-
-6. Para inspecionar o orquestrador (FastAPI + WebSocket):
+5. Para inspecionar o orquestrador (FastAPI + WebSocket):
    ```bash
    poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
    curl http://${ORCH_HOST:-127.0.0.1}:${ORCH_PORT:-8000}/status
@@ -59,26 +44,27 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
 
 > **Atribuição**: O modelo LLM padrão é **Llama 3 8B Instruct** servido pelo Ollama.
 
-## ASR em tempo real (faster-whisper + VAD)
-- O worker de ASR utiliza [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) com suporte a GPU (CUDA) e quantização `int8_float16` por padrão. Se a inicialização em GPU falhar, o worker faz fallback automático para CPU (`int8`) e registra um aviso nos logs.
-- Captura de áudio direta via `sounddevice` (RAW WASAPI/DirectSound). Caso o backend não esteja disponível, tenta `PyAudio`; na ausência de ambos, opera em modo sintético (`ASR_FAKE_AUDIO=1`) apenas para testes.
-- VAD local com [`webrtcvad`](https://github.com/wiseman/py-webrtcvad) identifica segmentos de fala. Ajuste o modo de agressividade com `ASR_VAD_AGGRESSIVENESS` (0-3) ou desative via `ASR_VAD=none` se estiver usando outra solução de detecção.
-- Parciais emitidas a cada `ASR_PARTIAL_INTERVAL_MS` (200 ms padrão) e finais após `ASR_SILENCE_MS` (500 ms padrão) de silêncio. Nos testes de bancada com uma RTX 4060 Ti, a latência média dos parciais ficou abaixo de 600 ms.
-- Eventos são publicados no broker do orquestrador (`POST /events/asr`) como `asr_partial` e `asr_final`, contendo `segment`, `text`, `confidence`, `started_at`, `ended_at` e métricas (`latency_ms` ou `duration_ms`). O WebSocket `/stream` propaga essas mensagens em tempo real para o painel/UI.
+### Como rodar sem Docker (Windows)
 
-### Variáveis específicas do ASR
-- `ASR_MODEL`: modelo Whisper (`small.en`, `medium.en`, etc.).
-- `ASR_DEVICE`: prioridade de dispositivo (`cuda`, `cpu`).
-- `ASR_COMPUTE_TYPE`: override opcional do compute type (`int8_float16`, `int8`...).
-- `ASR_SAMPLE_RATE`: taxa de amostragem (Hz, padrão `16000`).
-- `ASR_FRAME_MS`: tamanho de frame em ms (padrão `20`).
-- `ASR_PARTIAL_INTERVAL_MS`: intervalo mínimo entre parciais (ms).
-- `ASR_SILENCE_MS`: janela de silêncio para finalizar um segmento (ms).
-- `ASR_VAD`: `webrtc` (padrão) ou `none`.
-- `ASR_VAD_AGGRESSIVENESS`: agressividade do VAD (0-3).
-- `ASR_INPUT_DEVICE`: ID/nome do dispositivo de captura (opcional).
-- `ASR_FAKE_AUDIO`: force modo sintético (para testes sem microfone).
-- `ORCHESTRATOR_URL`: URL base alternativa para publicar eventos; por padrão deriva de `ORCH_HOST`/`ORCH_PORT`.
+1. Instale o [Python 3.11](https://www.python.org/downloads/windows/) (habilite "Add python.exe to PATH") e o [Poetry](https://python-poetry.org/docs/).
+2. Clone o repositório, abra **PowerShell 7+ (pwsh)** e configure o ambiente virtual:
+   ```powershell
+   poetry env use 3.11
+   poetry install
+   ```
+3. Copie o arquivo de variáveis: `Copy-Item .env.example .env` e edite as credenciais (Twitch OAuth, OBS, VTS etc.).
+4. Opcional porém recomendado: instale os hooks locais com `poetry run pre-commit install` para ativar `ruff`, `black`, `isort` e `mypy` antes dos commits.
+5. Use os scripts de automação em `scripts/` para iniciar ou encerrar cada serviço individualmente:
+   ```powershell
+   pwsh scripts/run_orchestrator.ps1 -Action start   # inicia o orquestrador (FastAPI)
+   pwsh scripts/run_asr.ps1 -Action status           # verifica o worker de ASR
+   pwsh scripts/run_tts.ps1 -Action stop             # encerra o worker de TTS
+   ```
+6. Para subir tudo de uma vez (sem Docker), execute:
+   ```powershell
+   pwsh scripts/run_all_no_docker.ps1 -Action start
+   ```
+   Utilize `-Action stop` para derrubar todos os serviços ou `-Action status` para conferir os PIDs ativos.
 
 ## Variáveis de ambiente essenciais
 As variáveis abaixo controlam como o orquestrador expõe seus endpoints HTTP/WebSocket e como os eventos são encaminhados para o módulo de telemetria:

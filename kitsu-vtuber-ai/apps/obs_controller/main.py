@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from typing import Optional
+from urllib.parse import urlparse
 
 try:
     from obsws_python import obsws
@@ -16,16 +17,26 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 class OBSController:
     def __init__(self) -> None:
-        self.host = os.getenv("OBS_HOST", "localhost")
-        self.port = int(os.getenv("OBS_PORT", "4455"))
-        self.password = os.getenv("OBS_PASSWORD", "")
+        default_host = os.getenv("OBS_HOST", "localhost")
+        default_port = int(os.getenv("OBS_PORT", "4455"))
+        url = os.getenv("OBS_WS_URL")
+        if url:
+            parsed = urlparse(url)
+            self.host = parsed.hostname or default_host
+            self.port = parsed.port or default_port
+        else:
+            self.host = default_host
+            self.port = default_port
+
+        self.password = os.getenv("OBS_WS_PASSWORD", os.getenv("OBS_PASSWORD", ""))
+        self.ws_url = url or f"ws://{self.host}:{self.port}"
         self._client: Optional[obsws] = None
 
     async def connect(self) -> None:
         if obsws is None:
             logger.warning("obsws-python not installed; running in dry mode")
             return
-        logger.info("Connecting to OBS at %s:%s", self.host, self.port)
+        logger.info("Connecting to OBS at %s", self.ws_url)
         self._client = obsws(self.host, self.port, self.password)
         self._client.connect()
 
