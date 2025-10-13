@@ -6,7 +6,7 @@ import os
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Literal
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -129,6 +129,25 @@ class ChatIngestRequest(BaseModel):
         allowed = {"user", "assistant", "system"}
         if value not in allowed:
             raise ValueError("Invalid role")
+        return value
+
+
+class ASREvent(BaseModel):
+    type: Literal["asr_partial", "asr_final"]
+    segment: int = Field(..., ge=0)
+    text: str = Field(..., min_length=1)
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    language: Optional[str] = Field(None, min_length=1)
+    started_at: float = Field(..., ge=0.0)
+    ended_at: float = Field(..., ge=0.0)
+    latency_ms: Optional[float] = Field(None, ge=0.0)
+    duration_ms: Optional[float] = Field(None, ge=0.0)
+
+    @validator("ended_at")
+    def validate_timestamps(cls, value: float, values: Dict[str, Any]) -> float:  # noqa: D417
+        started_at = values.get("started_at")
+        if started_at is not None and value < started_at:
+            raise ValueError("ended_at must be greater than or equal to started_at")
         return value
 
 
@@ -451,6 +470,24 @@ async def ingest_chat(
         "status": "accepted",
         "summary_generated": summary_payload is not None,
     }
+
+
+@app.post("/events/asr")
+async def receive_asr_event(
+    payload: ASREvent,
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
+    body = payload.dict()
+    event_type = body.pop("type")
+    message = {"type": event_type, "payload": body}
+    await broker.publish(message)
+    module = orchestrator.modules.get("asr_worker")
+    if module is not None:
+        metric = body.get("latency_ms") or body.get("duration_ms")
+        if metric is not None:
+            module.latency_ms = max(1.0, float(metric))
+        module.last_updated = time.time()
+    return {"status": "accepted"}
 
 
 @app.websocket("/stream")
