@@ -1,4 +1,4 @@
-"""Fallback simplificado de tenacity para ambientes de teste."""
+"""Fallback minimal implementation of ``tenacity`` used in tests."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ class _RetryAttempt:
 
 
 class AsyncRetrying:
-    """Implementação mínima compatível com o uso nos testes."""
+    """Minimal implementation compatible with our tests."""
 
     def __init__(
         self,
@@ -87,4 +87,3 @@ class AsyncRetrying:
             raise StopAsyncIteration
         self._attempt += 1
         return _RetryAttempt(self)
-

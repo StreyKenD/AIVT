@@ -15,33 +15,12 @@ from pydantic import BaseModel, Field, validator
 
 try:  # pragma: no cover - fallback para ambientes sem tenacity
     from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
-except ModuleNotFoundError:  # pragma: no cover - dependência opcional em testes
-    class _RetryAttempt:
-        async def __aenter__(self) -> None:
-            return None
-
-        async def __aexit__(self, exc_type, exc, tb) -> bool:
-            return False
-
-    class AsyncRetrying:
-        def __init__(self, *args, **kwargs) -> None:
-            self._yielded = False
-
-        def __aiter__(self) -> "AsyncRetrying":
-            self._yielded = False
-            return self
-
-        async def __anext__(self) -> _RetryAttempt:
-            if self._yielded:
-                raise StopAsyncIteration
-            self._yielded = True
-            return _RetryAttempt()
-
-    def stop_after_attempt(*args, **kwargs):
-        return None
-
-    def wait_exponential(*args, **kwargs):
-        return None
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - dependência opcional
+    from libs.compat.tenacity_shim import (
+        AsyncRetrying,
+        stop_after_attempt,
+        wait_exponential,
+    )
 
 from libs.common import configure_json_logging
 from libs.memory import MemoryController, MemorySummary
