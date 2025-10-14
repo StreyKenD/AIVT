@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import random
@@ -11,7 +12,15 @@ from typing import Any, Callable, Dict, List, Optional, Literal
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, validator
-from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
+
+try:  # pragma: no cover - fallback para ambientes sem tenacity
+    from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - dependência opcional
+    from libs.compat.tenacity_shim import (
+        AsyncRetrying,
+        stop_after_attempt,
+        wait_exponential,
+    )
 
 from libs.common import configure_json_logging
 from libs.memory import MemoryController, MemorySummary
@@ -183,9 +192,18 @@ class PresetRequest(BaseModel):
 class TelemetryPublisher:
     """Sends orchestrator events to an optional telemetry backend."""
 
-    def __init__(self, base_url: Optional[str]) -> None:
+    def __init__(
+        self,
+        base_url: Optional[str],
+        *,
+        api_key: Optional[str] = None,
+        source: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/") if base_url else None
-        self._client: Optional[httpx.AsyncClient] = None
+        self._api_key = api_key
+        self._source = source
+        self._client: Optional[httpx.AsyncClient] = client
         self._retry_factory: Callable[[], AsyncRetrying] = self._default_retry_factory
 
     def _default_retry_factory(self) -> AsyncRetrying:
@@ -198,9 +216,8 @@ class TelemetryPublisher:
     async def startup(self) -> None:
         if self._base_url is None or self._client is not None:
             return
-        self._client = httpx.AsyncClient(
-            base_url=self._base_url, timeout=httpx.Timeout(5.0)
-        )
+        timeout = httpx.Timeout(5.0)
+        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=timeout)
 
     async def shutdown(self) -> None:
         if self._client is None:
@@ -211,10 +228,26 @@ class TelemetryPublisher:
     async def publish_event(self, event: Dict[str, Any]) -> None:
         if self._client is None:
             return
+        headers: Dict[str, str] = {}
+        if self._api_key:
+            headers["X-API-Key"] = self._api_key
+        body = dict(event)
+        if self._source and not body.get("source"):
+            body["source"] = self._source
+        body.setdefault("ts", time.time())
+        request_kwargs: Dict[str, Any] = {"json": body}
+        if headers:
+            signature = inspect.signature(self._client.post)
+            accepts_headers = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD or name == "headers"
+                for name, param in signature.parameters.items()
+            )
+            if accepts_headers:
+                request_kwargs["headers"] = headers
         try:
             async for attempt in self._retry_factory():
                 with attempt:
-                    await self._client.post("/events", json=event)
+                    await self._client.post("/events", **request_kwargs)
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning(
                 "Telemetry publish failed for %s: %s",
@@ -263,6 +296,9 @@ class EventBroker:
             "ts": time.time(),
             "payload": event_payload,
         }
+        source = message.get("source")
+        if isinstance(source, str) and source:
+            telemetry_payload["source"] = source
         try:
             await self._telemetry.publish_event(telemetry_payload)
         except Exception:  # pragma: no cover - defensive guard
@@ -354,6 +390,8 @@ class OrchestratorState:
             raise KeyError(module)
         async with self._lock:
             self.modules[module].set_enabled(enabled)
+            if module == "tts_worker":
+                self.tts_muted = not enabled
             payload = {"type": "module.toggle", "module": module, "enabled": enabled}
         await self._broker.publish(payload)
         return payload
@@ -490,7 +528,11 @@ class OrchestratorState:
 
 
 memory_controller = MemoryController()
-telemetry = TelemetryPublisher(os.getenv("TELEMETRY_API_URL"))
+telemetry = TelemetryPublisher(
+    os.getenv("TELEMETRY_API_URL"),
+    api_key=os.getenv("TELEMETRY_API_KEY"),
+    source="orchestrator",
+)
 broker = EventBroker(telemetry)
 state = OrchestratorState(broker, memory_controller)
 gpu_monitor = GPUMonitor(

@@ -9,7 +9,14 @@ import pytest
 
 pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
 from fastapi.testclient import TestClient
-from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
+try:  # pragma: no cover - prefer real dependency when available
+    from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - fallback for minimal test envs
+    from libs.compat.tenacity_shim import (
+        AsyncRetrying,
+        stop_after_attempt,
+        wait_fixed,
+    )
 
 
 def load_orchestrator(

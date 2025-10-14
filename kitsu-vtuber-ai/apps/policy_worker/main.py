@@ -375,6 +375,7 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
     source = "mock" if POLICY_FORCE_MOCK else "ollama"
     if not prompt_guard.allowed:
         source = "moderation"
+    response_moderation: Optional[Dict[str, str]] = None
 
     yield _format_sse(
         "start",
@@ -425,10 +426,14 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
                 guard = await MODERATION.guard_response(data["content"])
                 if not guard.allowed:
                     data["content"] = _wrap_safe_xml(guard.sanitized_text)
-                    data.setdefault("meta", {})["moderation"] = {
+                    response_moderation = {
                         "phase": "response",
                         "reason": guard.reason,
                     }
+                    data.setdefault("meta", {})["moderation"] = response_moderation
+                    chunk = _format_sse("final", data)
+                elif response_moderation:
+                    data.setdefault("meta", {})["moderation"] = response_moderation
                     chunk = _format_sse("final", data)
             yield chunk
         return
@@ -444,14 +449,25 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
                 payload, request_id, start, persona, family_mode, attempt
             ):
                 event, data = _parse_sse(chunk)
+                if event == "token" and data.get("source") == "ollama" and not response_moderation:
+                    guard = await MODERATION.guard_response(data.get("token", ""))
+                    if not guard.allowed:
+                        response_moderation = {
+                            "phase": "response",
+                            "reason": guard.reason or "blocked",
+                        }
                 if event == "final":
                     guard = await MODERATION.guard_response(data["content"])
                     if not guard.allowed:
                         data["content"] = _wrap_safe_xml(guard.sanitized_text)
-                        data.setdefault("meta", {})["moderation"] = {
+                        response_moderation = {
                             "phase": "response",
                             "reason": guard.reason,
                         }
+                        data.setdefault("meta", {})["moderation"] = response_moderation
+                        chunk = _format_sse("final", data)
+                    elif response_moderation:
+                        data.setdefault("meta", {})["moderation"] = response_moderation
                         chunk = _format_sse("final", data)
                 yield chunk
             return
@@ -490,10 +506,14 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
             guard = await MODERATION.guard_response(data["content"])
             if not guard.allowed:
                 data["content"] = _wrap_safe_xml(guard.sanitized_text)
-                data.setdefault("meta", {})["moderation"] = {
+                response_moderation = {
                     "phase": "response",
                     "reason": guard.reason,
                 }
+                data.setdefault("meta", {})["moderation"] = response_moderation
+                chunk = _format_sse("final", data)
+            elif response_moderation:
+                data.setdefault("meta", {})["moderation"] = response_moderation
                 chunk = _format_sse("final", data)
         yield chunk
 
