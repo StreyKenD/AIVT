@@ -14,7 +14,7 @@ SoakHarness = soak_module.SoakHarness
 def test_windows_stack_scripts_cover_all_services() -> None:
     scripts_root = Path(__file__).resolve().parents[1] / "scripts"
     run_all = scripts_root / "run_all_no_docker.ps1"
-    assert run_all.exists(), "run_all_no_docker.ps1 deve estar presente"
+    assert run_all.exists(), "run_all_no_docker.ps1 must be present"
     content = run_all.read_text(encoding="utf-8")
 
     expected = [
@@ -27,8 +27,8 @@ def test_windows_stack_scripts_cover_all_services() -> None:
         "run_vts.ps1",
     ]
     for script in expected:
-        assert script in content, f"{script} não referenciado em run_all_no_docker.ps1"
-        assert (scripts_root / script).exists(), f"{script} ausente em scripts/"
+        assert script in content, f"{script} not referenced in run_all_no_docker.ps1"
+        assert (scripts_root / script).exists(), f"{script} missing in scripts/"
 
     assert 'ValidateSet("start", "stop", "status")' in content
 
@@ -60,7 +60,7 @@ class _MockOrchestratorClient:
         if path == "/tts":
             self.tts_payloads.append(json)
             return _FakeResponse({"status": "queued"})
-        raise AssertionError(f"Caminho inesperado: {path}")
+        raise AssertionError(f"Unexpected path: {path}")
 
     async def get(self, path: str, headers: Dict[str, str] | None = None):
         if path == "/status":
@@ -78,7 +78,7 @@ class _MockOrchestratorClient:
                 },
             }
             return _FakeResponse(payload)
-        raise AssertionError(f"GET inesperado: {path}")
+        raise AssertionError(f"Unexpected GET: {path}")
 
     async def aclose(self) -> None:
         return
@@ -93,7 +93,7 @@ class _MockPolicyStream:
 
     async def __aexit__(
         self, exc_type, exc, tb
-    ) -> None:  # pragma: no cover - não utilizado
+    ) -> None:  # pragma: no cover - not used
         return None
 
     def raise_for_status(self) -> None:
@@ -116,7 +116,7 @@ class _MockPolicyClient:
             "data: {}",
             "",
             "event: final",
-            'data: {"content": "<speech>olá</speech>", "latency_ms": 420.0, "source": "ollama"}',
+            'data: {"content": "<speech>hello</speech>", "latency_ms": 420.0, "source": "ollama"}',
             "",
         ]
         return _MockPolicyStream(payload)
@@ -165,7 +165,7 @@ def test_round_trip_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
     assert avg_latency is not None and avg_latency <= 700
     assert summary["policy_latency_ms"]["avg"] == pytest.approx(420.0)
 
-    assert telemetry.events, "telemetria não recebeu publicação"
+    assert telemetry.events, "telemetry did not receive a publication"
     event_type, payload = telemetry.events[0]
     assert event_type == "soak.result"
     assert payload["success"] is True

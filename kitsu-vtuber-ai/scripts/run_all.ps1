@@ -2,7 +2,7 @@ param(
     [switch]$UsePoetry
 )
 
-# --- Descobrir shell a usar (pwsh > powershell.exe) ---
+# --- Determine which shell to use (pwsh > powershell.exe) ---
 $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 if ($pwshCmd) {
     $ShellExe = $pwshCmd.Source
@@ -11,25 +11,25 @@ if ($pwshCmd) {
     if ($ps5Cmd) {
         $ShellExe = $ps5Cmd.Source
     } else {
-        Write-Error "Nenhuma shell encontrada (pwsh nem powershell.exe). Instale PowerShell 7 (pwsh) ou use o PowerShell do Windows."
+        Write-Error "No shell found (neither pwsh nor powershell.exe). Install PowerShell 7 (pwsh) or use Windows PowerShell."
         exit 1
     }
 }
 
-# --- Validação do Poetry quando solicitado ---
+# --- Validate Poetry when requested ---
 if ($UsePoetry) {
     $poetryCmd = Get-Command poetry -ErrorAction SilentlyContinue
     if (-not $poetryCmd) {
-        Write-Warning "Você passou -UsePoetry, mas 'poetry' não está no PATH. Vou abortar para evitar janelas quebradas."
-        Write-Host "Instale: https://python-poetry.org/docs/  ou rode sem -UsePoetry"
+        Write-Warning "You passed -UsePoetry, but 'poetry' is not on PATH. Aborting to avoid broken windows."
+        Write-Host "Install: https://python-poetry.org/docs/  or run without -UsePoetry"
         exit 1
     }
 }
 
-# --- Paths e env ---
+# --- Paths and environment ---
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
-# Respeita as variáveis de ambiente (definidas via .env / sistema)
+# Respect environment variables (defined via .env / system)
 $orchHost = if ($env:ORCH_HOST) { $env:ORCH_HOST } else { "127.0.0.1" }
 $orchPort = if ($env:ORCH_PORT) { $env:ORCH_PORT } else { "8000" }
 
@@ -41,10 +41,10 @@ function Start-ServiceJob {
 
     Write-Host "[RUN_ALL] Starting $Name..."
 
-    # Prefixo poetry quando habilitado
+    # Prefix with poetry when enabled
     $cmdToRun = if ($UsePoetry) { "poetry run $Command" } else { $Command }
 
-    # Monta argumentos para a shell escolhida
+    # Build arguments for the selected shell
     $argList = @('-NoLogo','-NoExit','-Command', $cmdToRun)
 
     try {
@@ -53,7 +53,7 @@ function Start-ServiceJob {
                       -WindowStyle Minimized `
                       -WorkingDirectory $repoRoot | Out-Null
     } catch {
-        Write-Error "[RUN_ALL] Falha ao iniciar '$Name': $($_.Exception.Message)"
+        Write-Error "[RUN_ALL] Failed to start '$Name': $($_.Exception.Message)"
     }
 }
 
@@ -72,5 +72,5 @@ foreach ($svc in $services) {
     Start-ServiceJob -Name $svc.Name -Command $svc.Command
 }
 
-Write-Host "[RUN_ALL] Pronto. Janelas abertas em segundo plano (minimizadas)."
-Write-Host "[RUN_ALL] Orchestrator em: http://$orchHost`:$orchPort/status"
+Write-Host "[RUN_ALL] Done. Windows opened in the background (minimized)."
+Write-Host "[RUN_ALL] Orchestrator at: http://$orchHost`:$orchPort/status"

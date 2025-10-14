@@ -55,7 +55,7 @@
     </svg>
   {:else}
     <div class="flex h-32 w-full items-center justify-center rounded-lg border border-dashed border-slate-800 bg-slate-950/40 text-xs text-slate-500">
-      Dados insuficientes para o gráfico.
+      Not enough data for the chart.
     </div>
   {/if}
 </div>

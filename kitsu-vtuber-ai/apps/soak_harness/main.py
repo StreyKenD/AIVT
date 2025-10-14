@@ -23,13 +23,13 @@ from libs.telemetry import TelemetryClient
 configure_json_logging("soak_harness")
 logger = logging.getLogger("kitsu.soak")
 DEFAULT_PROMPTS: Tuple[str, ...] = (
-    "Chat está quieto demais, puxa assunto fofo.",
-    "Um viewer pergunta como está a energia do show hoje.",
-    "Reaja com empolgação a uma raid surpresa.",
-    "Alguém pergunta qual será o próximo jogo.",
-    "Crie uma piada PG-13 sobre raposas e café.",
-    "Explique rapidamente o plano de conteúdo para amanhã.",
-    "Chat pede um momento motivacional e fofo.",
+    "Chat is too quiet, start a cute topic.",
+    "A viewer asks how the show's energy is today.",
+    "React enthusiastically to a surprise raid.",
+    "Someone asks what the next game will be.",
+    "Create a PG-13 joke about foxes and coffee.",
+    "Quickly explain the content plan for tomorrow.",
+    "Chat requests a motivational and cute moment.",
 )
 
 
@@ -73,7 +73,7 @@ def _extract_speech_text(payload: str) -> str:
 
 
 class SoakHarness:
-    """Executa conversas sintéticas e registra métricas do pipeline."""
+    """Runs synthetic conversations and records pipeline metrics."""
 
     def __init__(
         self,
@@ -96,7 +96,7 @@ class SoakHarness:
         self._telemetry_api_key = telemetry_api_key
         self._prompts = tuple(prompts)
         if not self._prompts:
-            raise ValueError("É necessário fornecer ao menos um prompt para o soak.")
+            raise ValueError("At least one prompt is required for the soak.")
 
         self._orchestrator_client = orchestrator_client
         self._policy_client = policy_client
@@ -118,7 +118,7 @@ class SoakHarness:
         turn_interval: float = 12.0,
         warmup_turns: int = 3,
     ) -> Dict[str, Any]:
-        """Executa o soak test e retorna o resumo agregado."""
+        """Run the soak test and return the aggregated summary."""
 
         start_time = time.time()
         deadline = start_time + (duration_minutes * 60.0)
@@ -183,7 +183,7 @@ class SoakHarness:
 
                 except (
                     Exception
-                ) as exc:  # pragma: no cover - guard para tempo de execução real
+                ) as exc:  # pragma: no cover - guard for real runtime
                     record.status = "error"
                     record.error = str(exc)
                     failures.append(
@@ -193,7 +193,7 @@ class SoakHarness:
                             "error": str(exc),
                         }
                     )
-                    logger.exception("Falha durante o turno %s", record.index)
+                    logger.exception("Failure during turn %s", record.index)
                     await asyncio.sleep(5.0)
                 finally:
                     record.finalize()
@@ -299,7 +299,7 @@ class SoakHarness:
                     final_payload = data
 
         if not final_payload:
-            raise RuntimeError("Policy worker não retornou evento final")
+            raise RuntimeError("Policy worker did not return a final event")
         return final_payload
 
     async def _request_tts(
@@ -320,7 +320,7 @@ class SoakHarness:
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
-            raise RuntimeError("Resposta inesperada do orquestrador")
+            raise RuntimeError("Unexpected orchestrator response")
         return payload
 
     async def _fetch_metrics(self, client: httpx.AsyncClient) -> Dict[str, Any]:
@@ -333,18 +333,18 @@ class SoakHarness:
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
-            raise RuntimeError("Resposta inesperada da telemetria")
+            raise RuntimeError("Unexpected telemetry response")
         return payload
 
     def _assert_modules_healthy(self, status_payload: Dict[str, Any]) -> None:
         modules = status_payload.get("modules")
         if not isinstance(modules, dict):
-            raise RuntimeError("Snapshot de módulos inválido")
+            raise RuntimeError("Invalid module snapshot")
         unhealthy = [
             name for name, info in modules.items() if info.get("state") != "online"
         ]
         if unhealthy:
-            raise RuntimeError(f"Módulos fora do ar: {', '.join(unhealthy)}")
+            raise RuntimeError(f"Modules offline: {', '.join(unhealthy)}")
 
     def _build_summary(
         self,
@@ -445,7 +445,7 @@ async def _async_main(args: argparse.Namespace) -> int:
         output_path.write_text(
             json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        logger.info("Resumo salvo em %s", output_path)
+        logger.info("Summary saved to %s", output_path)
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0 if summary.get("success") else 1
@@ -453,68 +453,68 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Executa o soak test de 2h da Kitsu.exe"
+        description="Runs the 2-hour Kitsu.exe soak test"
     )
     parser.add_argument(
         "--orchestrator-url",
         default=os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8000"),
-        help="Endpoint base do orquestrador",
+        help="Base endpoint for the orchestrator",
     )
     parser.add_argument(
         "--policy-url",
         default=os.getenv("SOAK_POLICY_URL")
         or os.getenv("POLICY_URL")
         or "http://127.0.0.1:8081",
-        help="Endpoint base do policy worker",
+        help="Base endpoint for the policy worker",
     )
     parser.add_argument(
         "--telemetry-url",
         default=os.getenv("SOAK_TELEMETRY_URL"),
-        help="Endpoint da API de telemetria (opcional)",
+        help="Telemetry API endpoint (optional)",
     )
     parser.add_argument(
         "--telemetry-api-key",
         default=None,
-        help="Chave da API de telemetria para consultas/ingestão",
+        help="Telemetry API key for queries/ingestion",
     )
     parser.add_argument(
         "--orchestrator-token",
         default=None,
-        help="Token bearer para o orquestrador",
+        help="Bearer token for the orchestrator",
     )
     parser.add_argument(
         "--duration-minutes",
         type=float,
         default=float(os.getenv("SOAK_DURATION_MINUTES", "120")),
-        help="Duração total do teste em minutos (padrão 120)",
+        help="Total test duration in minutes (default 120)",
     )
     parser.add_argument(
         "--max-turns",
         type=int,
         default=None,
-        help="Limite de turnos (útil para execução curta ou CI)",
+        help="Maximum number of turns (useful for short runs or CI)",
     )
     parser.add_argument(
         "--turn-interval",
         type=float,
         default=float(os.getenv("SOAK_TURN_INTERVAL_SECONDS", "15")),
-        help="Intervalo entre turnos em segundos (padrão 15)",
+        help="Interval between turns in seconds (default 15)",
     )
     parser.add_argument(
         "--warmup-turns",
         type=int,
         default=int(os.getenv("SOAK_WARMUP_TURNS", "3")),
-        help="Quantidade de turnos de aquecimento antes do intervalo completo",
+        help="Number of warmup turns before the full interval",
     )
     parser.add_argument(
         "--output",
         default=None,
-        help="Arquivo opcional para salvar o resumo em JSON",
+        help="Optional file path to save the JSON summary",
     )
     parser.add_argument(
         "--log-level",
         default=os.getenv("SOAK_LOG_LEVEL", "INFO"),
-        help="Nível de log para execução",
+        help="Log level for execution",
     )
     return parser
 

@@ -1,4 +1,4 @@
-"""Utilitários compartilhados do runtime."""
+"""Shared runtime utilities."""
 
 from .logging import configure_json_logging
 

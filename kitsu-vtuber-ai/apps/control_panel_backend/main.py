@@ -28,21 +28,21 @@ logger = logging.getLogger("kitsu.control_panel")
 class PanicIn(BaseModel):
     reason: str | None = Field(
         None,
-        description="Motivo opcional para comunicação com a equipe",
+        description="Optional reason to share with the team",
         max_length=240,
     )
 
 
 class MuteIn(BaseModel):
-    muted: bool = Field(..., description="Indica se o TTS deve permanecer mudo")
+    muted: bool = Field(..., description="Indicates whether TTS should remain muted")
 
 
 class PresetIn(BaseModel):
-    preset: str = Field(..., min_length=1, description="Identificador do preset")
+    preset: str = Field(..., min_length=1, description="Preset identifier")
 
 
 class ControlPanelGateway:
-    """Facilita a comunicação com o orquestrador e a API de telemetria."""
+    """Facilitates communication with the orchestrator and telemetry API."""
 
     def __init__(self, orchestrator_url: str, telemetry_url: str) -> None:
         self._orch_client = httpx.AsyncClient(
@@ -62,7 +62,7 @@ class ControlPanelGateway:
         data = _parse_json(response)
         if not isinstance(data, dict):
             raise HTTPException(
-                status_code=500, detail="Resposta inesperada do orquestrador"
+                status_code=500, detail="Unexpected response from the orchestrator"
             )
         return data
 
@@ -74,7 +74,7 @@ class ControlPanelGateway:
         data = _parse_json(response)
         if not isinstance(data, dict):
             raise HTTPException(
-                status_code=500, detail="Resposta inesperada do orquestrador"
+                status_code=500, detail="Unexpected response from the orchestrator"
             )
         return data
 
@@ -117,7 +117,7 @@ def _build_telemetry_headers() -> Dict[str, str]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gateway = ControlPanelGateway(_ORCHESTRATOR_URL, _TELEMETRY_URL)
     logger.info(
-        "Backend de controle pronto",
+        "Control backend ready",
         extra={"orchestrator": _ORCHESTRATOR_URL, "telemetry": _TELEMETRY_URL},
     )
     app.state.gateway = gateway
@@ -165,7 +165,7 @@ async def soak_results(
         "/events", params={"type": "soak.result", "limit": limit}
     )
     if not isinstance(events, list):
-        raise HTTPException(status_code=500, detail="Resposta inesperada da telemetria")
+        raise HTTPException(status_code=500, detail="Unexpected response from telemetry")
     return {"items": events}
 
 

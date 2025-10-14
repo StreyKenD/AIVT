@@ -13,9 +13,9 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, validator
 
-try:  # pragma: no cover - fallback para ambientes sem tenacity
+try:  # pragma: no cover - fallback for environments without tenacity
     from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - dependência opcional
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional dependency
     from libs.compat.tenacity_shim import (
         AsyncRetrying,
         stop_after_attempt,
@@ -169,23 +169,23 @@ class ASREvent(BaseModel):
 class PanicRequest(BaseModel):
     reason: Optional[str] = Field(
         None,
-        description="Motivo opcional para o gatilho de pânico",
+        description="Optional reason for triggering panic",
         max_length=240,
     )
 
 
 class MuteRequest(BaseModel):
-    muted: bool = Field(..., description="Define se o TTS deve permanecer mudo")
+    muted: bool = Field(..., description="Indicates whether TTS should remain muted")
 
 
 class PresetRequest(BaseModel):
-    preset: str = Field(..., min_length=1, description="Identificador do preset")
+    preset: str = Field(..., min_length=1, description="Preset identifier")
 
     @validator("preset")
     def validate_preset(cls, value: str) -> str:  # noqa: D417
         allowed = set(OrchestratorState._PRESETS.keys())  # type: ignore[attr-defined]
         if value not in allowed:
-            raise ValueError(f"Preset desconhecido: {value}")
+            raise ValueError(f"Unknown preset: {value}")
         return value
 
 

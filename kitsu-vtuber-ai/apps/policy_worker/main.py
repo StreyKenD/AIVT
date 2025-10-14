@@ -40,7 +40,7 @@ async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> No
     try:
         await TELEMETRY.publish(event_type, payload)
     except Exception as exc:  # pragma: no cover - telemetry guard
-        logger.debug("Falha ao enviar métrica da policy: %s", exc)
+        logger.debug("Failed to send policy metric: %s", exc)
 
 
 SYSTEM_PROMPT_TEMPLATE = """
@@ -95,11 +95,11 @@ class PolicyRequest(BaseModel):
         None, description="Override to disable/enable family-friendly filtering"
     )
     memory_summary: Optional[str] = Field(
-        None, description="Resumo da memória recente fornecido pelo orquestrador"
+        None, description="Recent memory summary provided by the orchestrator"
     )
     recent_turns: List[Dict[str, str]] = Field(
         default_factory=list,
-        description="Histórico curto de mensagens com campos role/content",
+        description="Short history of messages with role/content fields",
     )
 
     @validator("recent_turns", each_item=True)

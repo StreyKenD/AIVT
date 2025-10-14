@@ -45,17 +45,17 @@
   type ControlState = NonNullable<OrchestratorStatus['control']>;
 
   const expressionOptions: ExpressionOption[] = [
-    { label: 'Sorriso', value: 'smile', intensity: 0.7 },
-    { label: 'Surpresa', value: 'surprised', intensity: 0.8 },
-    { label: 'Relax', value: 'calm', intensity: 0.5 },
-    { label: 'Pensativa', value: 'thinking', intensity: 0.6 },
-    { label: 'Sonolenta', value: 'sleepy', intensity: 0.4 }
+    { label: 'Smile', value: 'smile', intensity: 0.7 },
+    { label: 'Surprised', value: 'surprised', intensity: 0.8 },
+    { label: 'Relaxed', value: 'calm', intensity: 0.5 },
+    { label: 'Thoughtful', value: 'thinking', intensity: 0.6 },
+    { label: 'Sleepy', value: 'sleepy', intensity: 0.4 }
   ];
 
   const presetOptions = [
-    { value: 'default', label: 'Default', description: 'Equilíbrio kawaii (50% energia)' },
-    { value: 'cozy', label: 'Cozy', description: 'Tom calmo para segmentos de conversa íntima' },
-    { value: 'hype', label: 'Hype', description: 'Energia máxima para anúncios e raids' }
+    { value: 'default', label: 'Default', description: 'Kawaii balance (50% energy)' },
+    { value: 'cozy', label: 'Cozy', description: 'Calm tone for intimate chat segments' },
+    { value: 'hype', label: 'Hype', description: 'Maximum energy for announcements and raids' }
   ];
 
   const latencySeries: LatencySeries = {
@@ -139,10 +139,10 @@
       const snapshot = await getStatus();
       applySnapshot(snapshot);
       if (showNotice) {
-        setFeedback('success', 'Status atualizado.');
+        setFeedback('success', 'Status updated.');
       }
     } catch (error) {
-      loadError = getErrorMessage(error, 'Falha ao carregar o status do orquestrador.');
+      loadError = getErrorMessage(error, 'Failed to load orchestrator status.');
     } finally {
       if (initial) {
         loadingStatus = false;
@@ -366,7 +366,7 @@
       metrics = latest;
       updateLatencySeries(latest);
     } catch (error) {
-      metricsError = getErrorMessage(error, 'Falha ao carregar métricas.');
+      metricsError = getErrorMessage(error, 'Failed to load metrics.');
     } finally {
       if (initial) {
         metricsLoading = false;
@@ -382,7 +382,7 @@
     try {
       soakResults = await fetchSoakResults(10);
     } catch (error) {
-      soakError = getErrorMessage(error, 'Falha ao carregar resultados do soak test.');
+      soakError = getErrorMessage(error, 'Failed to load soak test results.');
     } finally {
       if (initial) {
         soakLoading = false;
@@ -407,7 +407,7 @@
 
     try {
       await toggleModule(module, enabled);
-      setFeedback('success', `Modulo ${module} ${enabled ? 'ativado' : 'desativado'}.`);
+      setFeedback('success', `Module ${module} ${enabled ? 'enabled' : 'disabled'}.`);
     } catch (error) {
       if (previous) {
         orchestrator = {
@@ -415,7 +415,7 @@
           modules: { ...orchestrator.modules, [module]: previous }
         };
       }
-      setFeedback('error', getErrorMessage(error, 'Nao foi possivel alterar o modulo.'));
+      setFeedback('error', getErrorMessage(error, 'Could not toggle module.'));
     } finally {
       modulePending = { ...modulePending, [module]: false };
     }
@@ -435,9 +435,9 @@
       const updated = clonePersona(response.persona);
       orchestrator = { ...orchestrator, persona: updated };
       personaForm = toPersonaForm(updated);
-      setFeedback('success', 'Persona atualizada com sucesso.');
+      setFeedback('success', 'Persona updated successfully.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Nao foi possivel atualizar a persona.'));
+      setFeedback('error', getErrorMessage(error, 'Could not update persona.'));
     } finally {
       personaSubmitting = false;
     }
@@ -447,7 +447,7 @@
     if (!orchestrator) return;
     const trimmed = sceneInput.trim();
     if (!trimmed) {
-      setFeedback('error', 'Informe um nome de cena valido.');
+      setFeedback('error', 'Provide a valid scene name.');
       return;
     }
 
@@ -455,9 +455,9 @@
     try {
       await setOBSScene(trimmed);
       orchestrator = { ...orchestrator, scene: trimmed };
-      setFeedback('success', 'Cena enviada ao OBS.');
+      setFeedback('success', 'Scene sent to OBS.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Nao foi possivel atualizar a cena.'));
+      setFeedback('error', getErrorMessage(error, 'Could not update the scene.'));
     } finally {
       sceneSubmitting = false;
     }
@@ -467,7 +467,7 @@
     if (!orchestrator) return;
     const text = ttsText.trim();
     if (!text) {
-      setFeedback('error', 'Informe um texto para TTS.');
+      setFeedback('error', 'Provide text for TTS.');
       return;
     }
 
@@ -477,9 +477,9 @@
       const response = await requestTTS(voice ? { text, voice } : { text });
       orchestrator = { ...orchestrator, last_tts: cloneTts(response.data) };
       ttsText = '';
-      setFeedback('success', 'Pedido de TTS enviado.');
+      setFeedback('success', 'TTS request sent.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Nao foi possivel enviar o TTS.'));
+      setFeedback('error', getErrorMessage(error, 'Could not send the TTS request.'));
     } finally {
       ttsSubmitting = false;
     }
@@ -498,9 +498,9 @@
           ts: Date.now() / 1000
         }
       };
-      setFeedback('success', `Expressao ${option.label} enviada.`);
+      setFeedback('success', `Expression ${option.label} sent.`);
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Nao foi possivel atualizar a expressao.'));
+      setFeedback('error', getErrorMessage(error, 'Could not update the expression.'));
     } finally {
       expressionPending = false;
     }
@@ -513,9 +513,9 @@
     try {
       await setGlobalMute(target);
       controlState = { ...controlState, tts_muted: target };
-      setFeedback('success', target ? 'TTS silenciado.' : 'TTS reativado.');
+      setFeedback('success', target ? 'TTS muted.' : 'TTS unmuted.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Não foi possível alternar mute.'));
+      setFeedback('error', getErrorMessage(error, 'Could not toggle mute.'));
     } finally {
       mutePending = false;
     }
@@ -533,9 +533,9 @@
           typeof response.reason === 'string' && response.reason.trim() ? response.reason : panicReason.trim() || null
       };
       panicReason = '';
-      setFeedback('success', 'Modo pânico acionado.');
+      setFeedback('success', 'Panic mode triggered.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Não foi possível disparar o pânico.'));
+      setFeedback('error', getErrorMessage(error, 'Could not trigger panic.'));
     } finally {
       panicPending = false;
     }
@@ -547,10 +547,10 @@
     try {
       await applyPreset(preset);
       controlState = { ...controlState, active_preset: preset };
-      setFeedback('success', `Preset ${preset} aplicado.`);
+      setFeedback('success', `Preset ${preset} applied.`);
       await fetchStatus(false);
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Não foi possível aplicar o preset.'));
+      setFeedback('error', getErrorMessage(error, 'Could not apply the preset.'));
     } finally {
       presetPending = null;
     }
@@ -569,9 +569,9 @@
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setFeedback('success', 'CSV exportado com sucesso.');
+      setFeedback('success', 'CSV exported successfully.');
     } catch (error) {
-      setFeedback('error', getErrorMessage(error, 'Falha ao exportar CSV.'));
+      setFeedback('error', getErrorMessage(error, 'Failed to export CSV.'));
     } finally {
       csvPending = false;
     }
@@ -596,7 +596,7 @@
       <div>
         <h1 class="text-3xl font-semibold tracking-tight">Kitsu Orchestrator</h1>
         <p class="text-sm text-slate-400">
-          Gerencie persona, modulos e automacoes em tempo real.
+          Manage persona, modules, and automations in real time.
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -606,9 +606,9 @@
           disabled={loadingStatus || refreshing}
         >
           {#if refreshing}
-            Atualizando...
+            Refreshing...
           {:else}
-            Atualizar status
+            Refresh status
           {/if}
         </button>
       </div>
@@ -629,7 +629,7 @@
     {/if}
 
     {#if loadingStatus}
-      <p class="text-sm text-slate-300" aria-live="polite">Carregando status do orquestrador...</p>
+      <p class="text-sm text-slate-300" aria-live="polite">Loading orchestrator status...</p>
     {:else if loadError}
       <div
         class="rounded-lg border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-200"
@@ -641,65 +641,65 @@
           class="mt-3 rounded bg-red-500 px-3 py-1.5 text-xs font-semibold text-red-950 hover:bg-red-400"
           on:click={() => fetchStatus(true)}
         >
-          Tentar novamente
+          Try again
         </button>
       </div>
     {:else if orchestrator}
-      <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Resumo rapido">
+      <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Quick summary">
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
           <h2 class="text-xs uppercase text-slate-400">Persona</h2>
           <p class="text-2xl font-semibold capitalize">{orchestrator.persona.style}</p>
           <p class="mt-2 text-sm text-slate-300">
-            Energia {Math.round(orchestrator.persona.energy * 100)}% &middot; Chaos {Math.round(orchestrator.persona.chaos_level * 100)}%
+            Energy {Math.round(orchestrator.persona.energy * 100)}% &middot; Chaos {Math.round(orchestrator.persona.chaos_level * 100)}%
           </p>
           <p class="text-xs text-slate-500">
-            Familia {orchestrator.persona.family_mode ? 'ativada' : 'desativada'}
+            Family {orchestrator.persona.family_mode ? 'enabled' : 'disabled'}
           </p>
         </div>
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
-          <h2 class="text-xs uppercase text-slate-400">Cena OBS</h2>
+          <h2 class="text-xs uppercase text-slate-400">OBS scene</h2>
           <p class="text-2xl font-semibold">{orchestrator.scene}</p>
-          <p class="mt-2 text-xs text-slate-500">Status do orquestrador: {orchestrator.status}</p>
+          <p class="mt-2 text-xs text-slate-500">Orchestrator status: {orchestrator.status}</p>
         </div>
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
-          <h2 class="text-xs uppercase text-slate-400">Expressao ativa</h2>
+          <h2 class="text-xs uppercase text-slate-400">Active expression</h2>
           <p class="text-2xl font-semibold capitalize">
             {orchestrator.last_expression ? orchestrator.last_expression.expression : 'n/d'}
           </p>
           <p class="mt-2 text-xs text-slate-500">
-            Intensidade {orchestrator.last_expression ? Math.round(orchestrator.last_expression.intensity * 100) : 0}%
+            Intensity {orchestrator.last_expression ? Math.round(orchestrator.last_expression.intensity * 100) : 0}%
           </p>
           <p class="text-xs text-slate-500">
-            Atualizado {formatTimestamp(orchestrator.last_expression?.ts)}
+            Updated {formatTimestamp(orchestrator.last_expression?.ts)}
           </p>
         </div>
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
-          <h2 class="text-xs uppercase text-slate-400">Ultimo TTS</h2>
+          <h2 class="text-xs uppercase text-slate-400">Latest TTS</h2>
           <p class="text-base font-medium text-slate-200">
-            {orchestrator.last_tts ? orchestrator.last_tts.text : 'Nenhum pedido ainda.'}
+            {orchestrator.last_tts ? orchestrator.last_tts.text : 'No request yet.'}
           </p>
           {#if orchestrator.last_tts}
-            <p class="mt-2 text-xs text-slate-500">Voz: {orchestrator.last_tts.voice ?? 'auto'}</p>
-            <p class="text-xs text-slate-500">Emitido {formatTimestamp(orchestrator.last_tts.ts)}</p>
+            <p class="mt-2 text-xs text-slate-500">Voice: {orchestrator.last_tts.voice ?? 'auto'}</p>
+            <p class="text-xs text-slate-500">Sent {formatTimestamp(orchestrator.last_tts.ts)}</p>
           {/if}
         </div>
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
-          <h2 class="text-xs uppercase text-slate-400">Operação</h2>
+          <h2 class="text-xs uppercase text-slate-400">Operations</h2>
           <p class="text-lg font-semibold capitalize">Preset {controlState.active_preset}</p>
           <p class="mt-2 text-xs text-slate-500">
-            TTS {controlState.tts_muted ? 'mutado' : 'ativo'}
+            TTS {controlState.tts_muted ? 'muted' : 'active'}
           </p>
           <p class="text-xs text-slate-500">
-            Último pânico {formatRelativeTimestamp(controlState.panic_at)}
+            Last panic {formatRelativeTimestamp(controlState.panic_at)}
           </p>
         </div>
       </section>
 
-      <section class="rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow" aria-label="Telemetria em tempo real">
+      <section class="rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow" aria-label="Real-time telemetry">
         <header class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 class="text-lg font-medium">Telemetria em tempo real</h2>
-            <p class="text-xs text-slate-400">Latências agregadas por estágio e visão do soak test.</p>
+            <h2 class="text-lg font-medium">Real-time telemetry</h2>
+            <p class="text-xs text-slate-400">Aggregated latencies per stage and soak test overview.</p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <button
@@ -707,20 +707,20 @@
               on:click={() => refreshMetrics(false)}
               disabled={metricsLoading}
             >
-              {metricsLoading ? 'Carregando...' : 'Atualizar métricas'}
+              {metricsLoading ? 'Loading...' : 'Refresh metrics'}
             </button>
             <button
               class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-emerald-950 hover:bg-emerald-400 disabled:opacity-60"
               on:click={downloadCsvExport}
               disabled={csvPending}
             >
-              {csvPending ? 'Gerando CSV...' : 'Exportar CSV'}
+              {csvPending ? 'Generating CSV...' : 'Export CSV'}
             </button>
           </div>
         </header>
 
         {#if metricsLoading}
-          <p class="mt-4 text-sm text-slate-400" aria-live="polite">Carregando métricas...</p>
+          <p class="mt-4 text-sm text-slate-400" aria-live="polite">Loading metrics...</p>
         {:else if metricsError}
           <div class="mt-4 rounded border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
             {metricsError}
@@ -746,35 +746,35 @@
           <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">ASR</p>
-              <p>Eventos: {metrics.metrics.asr_worker?.count ?? 0}</p>
-              <p>Latência média: {getLatencySnapshot('asr_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Events: {metrics.metrics.asr_worker?.count ?? 0}</p>
+              <p>Average latency: {getLatencySnapshot('asr_worker')?.toFixed(1) ?? 'n/d'} ms</p>
             </div>
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">Policy</p>
-              <p>Eventos: {metrics.metrics.policy_worker?.count ?? 0}</p>
-              <p>Latência média: {getLatencySnapshot('policy_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Events: {metrics.metrics.policy_worker?.count ?? 0}</p>
+              <p>Average latency: {getLatencySnapshot('policy_worker')?.toFixed(1) ?? 'n/d'} ms</p>
             </div>
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">TTS</p>
-              <p>Eventos: {metrics.metrics.tts_worker?.count ?? 0}</p>
-              <p>Latência média: {getLatencySnapshot('tts_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Events: {metrics.metrics.tts_worker?.count ?? 0}</p>
+              <p>Average latency: {getLatencySnapshot('tts_worker')?.toFixed(1) ?? 'n/d'} ms</p>
             </div>
           </div>
         {/if}
 
         <div class="mt-6 border-t border-white/5 pt-4">
           <div class="flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-slate-200">Resultados do soak test</h3>
+            <h3 class="text-sm font-semibold text-slate-200">Soak test results</h3>
             <button
               class="rounded bg-slate-800 px-3 py-1.5 text-xs font-semibold hover:bg-slate-700 disabled:opacity-60"
               on:click={() => refreshSoak(false)}
               disabled={soakLoading}
             >
-              {soakLoading ? 'Carregando...' : 'Atualizar' }
+              {soakLoading ? 'Loading...' : 'Refresh' }
             </button>
           </div>
           {#if soakLoading && !soakResults.length}
-            <p class="mt-3 text-xs text-slate-400" aria-live="polite">Carregando histórico de soak...</p>
+            <p class="mt-3 text-xs text-slate-400" aria-live="polite">Loading soak history...</p>
           {:else if soakError}
             <div class="mt-3 rounded border border-red-500/50 bg-red-500/10 p-3 text-xs text-red-200" role="alert">
               {soakError}
@@ -794,7 +794,7 @@
                     <tr>
                       <td class="px-3 py-2 whitespace-nowrap">{new Date(result.ts).toLocaleString()}</td>
                       <td class="px-3 py-2">
-                        {result.payload.success ? '✅ Sucesso' : '⚠️ Falha'}
+                        {result.payload.success ? '✅ Success' : '⚠️ Failure'}
                       </td>
                       <td class="px-3 py-2">
                         <code class="rounded bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300">
@@ -807,18 +807,18 @@
               </table>
             </div>
           {:else}
-            <p class="mt-3 text-xs text-slate-400">Nenhum resultado registrado ainda.</p>
+            <p class="mt-3 text-xs text-slate-400">No results recorded yet.</p>
           {/if}
         </div>
       </section>
 
-      <section class="grid gap-6 lg:grid-cols-[2fr,1fr]" aria-label="Controles principais">
+      <section class="grid gap-6 lg:grid-cols-[2fr,1fr]" aria-label="Primary controls">
         <div class="flex flex-col gap-6">
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Modulos do orquestrador">
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Orchestrator modules">
             <header class="mb-4 flex items-center justify-between">
-              <h2 class="text-lg font-medium">Modulos</h2>
+              <h2 class="text-lg font-medium">Modules</h2>
               <p class="text-xs text-slate-400">
-                Restauracao automatica: {orchestrator.restore_context ? 'ativa' : 'inativa'}
+                Automatic restore: {orchestrator.restore_context ? 'enabled' : 'disabled'}
               </p>
             </header>
             <ul class="grid gap-3 md:grid-cols-2">
@@ -828,14 +828,14 @@
                     <div>
                       <p class="text-sm font-semibold text-slate-100">{name}</p>
                       <p class="text-xs text-slate-400">
-                        {module.state === 'online' ? 'Online' : 'Offline'} &middot; Latencia {module.latency_ms.toFixed(1)} ms
+                        {module.state === 'online' ? 'Online' : 'Offline'} &middot; Latency {module.latency_ms.toFixed(1)} ms
                       </p>
                       <p class="text-[11px] text-slate-500">
-                        Atualizado {formatTimestamp(module.last_updated)}
+                        Updated {formatTimestamp(module.last_updated)}
                       </p>
                     </div>
                     <label class="inline-flex items-center gap-2 text-xs font-medium">
-                      <span class="sr-only">Alternar {name}</span>
+                      <span class="sr-only">Toggle {name}</span>
                       <input
                         type="checkbox"
                         class="h-4 w-4 rounded border border-slate-600 bg-slate-800"
@@ -844,7 +844,7 @@
                         on:change={(event) =>
                           handleModuleToggle(name, (event.currentTarget as HTMLInputElement).checked)}
                       />
-                      <span>{module.state === 'online' ? 'Ativo' : 'Inativo'}</span>
+                      <span>{module.state === 'online' ? 'Active' : 'Inactive'}</span>
                     </label>
                   </div>
                 </li>
@@ -852,46 +852,46 @@
             </ul>
           </article>
 
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Historico de memoria">
-            <h2 class="text-lg font-medium">Memoria</h2>
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Memory history">
+            <h2 class="text-lg font-medium">Memory</h2>
             <p class="mt-2 text-sm text-slate-300">
-              Buffer: {orchestrator.memory.buffer_length} interacoes &middot; Resumo a cada {orchestrator.memory.summary_interval} falas
+              Buffer: {orchestrator.memory.buffer_length} interactions &middot; Summary every {orchestrator.memory.summary_interval} turns
             </p>
             <p class="text-xs text-slate-400">
-              Restauracao de memoria {orchestrator.memory.restore_enabled ? 'habilitada' : 'desabilitada'}
+              Memory restore {orchestrator.memory.restore_enabled ? 'enabled' : 'disabled'}
             </p>
             {#if orchestrator.memory.current_summary}
               <div class="mt-4 rounded border border-white/5 bg-slate-950/40 p-3 text-sm text-slate-200">
-                <p class="font-semibold">Resumo #{orchestrator.memory.current_summary.id ?? 'n/d'}</p>
+                <p class="font-semibold">Summary #{orchestrator.memory.current_summary.id ?? 'n/d'}</p>
                 <p class="mt-2 text-slate-300">{orchestrator.memory.current_summary.summary_text}</p>
                 <p class="mt-2 text-xs text-slate-400">
-                  Humor: {orchestrator.memory.current_summary.mood_state} &middot; Atualizado {formatTimestamp(orchestrator.memory.current_summary.ts)}
+                  Mood: {orchestrator.memory.current_summary.mood_state} &middot; Updated {formatTimestamp(orchestrator.memory.current_summary.ts)}
                 </p>
               </div>
             {:else}
-              <p class="mt-3 text-sm text-slate-400">Nenhum resumo gerado ainda.</p>
+              <p class="mt-3 text-sm text-slate-400">No summary generated yet.</p>
             {/if}
           </article>
 
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Solicitar TTS">
-            <h2 class="text-lg font-medium">Solicitar TTS</h2>
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Request TTS">
+            <h2 class="text-lg font-medium">Request TTS</h2>
             <form class="mt-4 space-y-4" on:submit|preventDefault={submitTTS}>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
-                Texto
+                Text
                 <textarea
                   class="min-h-[96px] rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   bind:value={ttsText}
-                  aria-label="Texto do TTS"
+                  aria-label="TTS text"
                   required
                 ></textarea>
               </label>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
-                Voz preferida (opcional)
+                Preferred voice (optional)
                 <input
                   type="text"
                   class="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   bind:value={ttsVoice}
-                  aria-label="Identificador da voz"
+                  aria-label="Voice identifier"
                   placeholder="ex: en-US-female"
                 />
               </label>
@@ -900,17 +900,17 @@
                 type="submit"
                 disabled={ttsSubmitting}
               >
-                {ttsSubmitting ? 'Enviando...' : 'Enviar TTS'}
+                {ttsSubmitting ? 'Sending...' : 'Send TTS'}
               </button>
             </form>
           </article>
         </div>
 
         <aside class="flex flex-col gap-6">
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Controles de segurança">
-            <h2 class="text-lg font-medium">Segurança</h2>
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Safety controls">
+            <h2 class="text-lg font-medium">Safety</h2>
             <p class="mt-1 text-xs text-slate-400">
-              Estado: {controlState.tts_muted ? 'TTS mutado' : 'TTS ativo'} &middot; Preset {controlState.active_preset}
+              State: {controlState.tts_muted ? 'TTS muted' : 'TTS active'} &middot; Preset {controlState.active_preset}
             </p>
             <button
               class={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-semibold transition ${
@@ -922,16 +922,16 @@
               on:click={toggleMuteState}
               disabled={mutePending}
             >
-              {controlState.tts_muted ? 'Desmutar TTS' : 'Mutar TTS'}
+              {controlState.tts_muted ? 'Unmute TTS' : 'Mute TTS'}
             </button>
 
-            <div class="mt-4 space-y-2" aria-label="Pânico">
+            <div class="mt-4 space-y-2" aria-label="Panic">
               <label class="flex flex-col gap-1 text-xs font-medium text-slate-300">
-                Mensagem opcional
+                Optional message
                 <textarea
                   class="min-h-[60px] rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   bind:value={panicReason}
-                  aria-label="Motivo do pânico"
+                  aria-label="Panic reason"
                 />
               </label>
               <button
@@ -940,15 +940,15 @@
                 on:click={sendPanic}
                 disabled={panicPending}
               >
-                {panicPending ? 'Acionando...' : 'Acionar pânico'}
+                {panicPending ? 'Triggering...' : 'Trigger panic'}
               </button>
               <p class="text-[11px] text-slate-500">
-                Último pânico: {formatRelativeTimestamp(controlState.panic_at)}
+                Last panic: {formatRelativeTimestamp(controlState.panic_at)}
               </p>
             </div>
 
             <div class="mt-5 space-y-2">
-              <h3 class="text-sm font-semibold text-slate-200">Presets de persona</h3>
+              <h3 class="text-sm font-semibold text-slate-200">Persona presets</h3>
               <ul class="space-y-2">
                 {#each presetOptions as preset}
                   <li>
@@ -971,15 +971,15 @@
             </div>
           </article>
 
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Configurar persona">
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Configure persona">
             <h2 class="text-lg font-medium">Persona</h2>
             <form class="mt-4 space-y-4" on:submit|preventDefault={submitPersona}>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
-                Estilo
+                Style
                 <select
                   class="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   bind:value={personaForm.style}
-                  aria-label="Estilo da persona"
+                  aria-label="Persona style"
                 >
                   {#each personaStyles as style}
                     <option value={style}>{style}</option>
@@ -995,11 +995,11 @@
                   bind:value={personaForm.chaos}
                   class="range"
                   aria-valuenow={personaForm.chaos}
-                  aria-label="Nivel de chaos"
+                  aria-label="Chaos level"
                 />
               </label>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
-                Energia ({personaForm.energy}%)
+                Energy ({personaForm.energy}%)
                 <input
                   type="range"
                   min="0"
@@ -1007,7 +1007,7 @@
                   bind:value={personaForm.energy}
                   class="range"
                   aria-valuenow={personaForm.energy}
-                  aria-label="Nivel de energia"
+                  aria-label="Energy level"
                 />
               </label>
               <label class="flex items-center gap-2 text-sm font-medium text-slate-200">
@@ -1015,21 +1015,21 @@
                   type="checkbox"
                   class="h-4 w-4 rounded border border-slate-600 bg-slate-800"
                   bind:checked={personaForm.family_mode}
-                  aria-label="Ativar modo familia"
+                  aria-label="Enable family mode"
                 />
-                Modo familia
+                Family mode
               </label>
               <button
                 class="w-full rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-60"
                 type="submit"
                 disabled={personaSubmitting}
               >
-                {personaSubmitting ? 'Salvando...' : 'Salvar ajustes'}
+                {personaSubmitting ? 'Saving...' : 'Save changes'}
               </button>
             </form>
           </article>
 
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Atualizar cena do OBS">
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Update OBS scene">
             <h2 class="text-lg font-medium">OBS</h2>
             <form class="mt-4 space-y-3" on:submit|preventDefault={submitScene}>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
@@ -1038,7 +1038,7 @@
                   type="text"
                   class="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   bind:value={sceneInput}
-                  aria-label="Cena do OBS"
+                  aria-label="OBS scene"
                 />
               </label>
               <button
@@ -1046,13 +1046,13 @@
                 type="submit"
                 disabled={sceneSubmitting}
               >
-                {sceneSubmitting ? 'Atualizando...' : 'Atualizar cena'}
+                {sceneSubmitting ? 'Refreshing...' : 'Atualizar cena'}
               </button>
             </form>
           </article>
 
-          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="Expressao VTS">
-            <h2 class="text-lg font-medium">Expressoes VTS</h2>
+          <article class="rounded-xl border border-white/10 bg-slate-900/70 p-4 shadow" aria-label="VTS expressions">
+            <h2 class="text-lg font-medium">VTS expressions</h2>
             <div class="mt-3 grid grid-cols-2 gap-2">
               {#each expressionOptions as option}
                 <button
@@ -1071,17 +1071,17 @@
               {/each}
             </div>
             <p class="mt-4 text-xs text-slate-400">
-              Intensidade atual{' '}
+              Current intensity{' '}
               {orchestrator.last_expression ? Math.round(orchestrator.last_expression.intensity * 100) : 0}%
             </p>
           </article>
         </aside>
       </section>
     {/if}
-    <footer class="mt-10 border-t border-white/10 pt-4 text-[11px] text-slate-500" aria-label="Atribuições e licenças">
-      <p class="font-medium">© {currentYear} Kitsu.exe · Uso interno.</p>
+    <footer class="mt-10 border-t border-white/10 pt-4 text-[11px] text-slate-500" aria-label="Attributions and licenses">
+      <p class="font-medium">© {currentYear} Kitsu.exe · Internal use.</p>
       <p class="mt-1">
-        Licenças obrigatórias: Llama 3 8B Instruct (Meta), Coqui-TTS e Avatar Live2D “Lumi”. Consulte `licenses/third_party/` no repositório.
+        Required licenses: Llama 3 8B Instruct (Meta), Coqui-TTS, and Live2D Avatar “Lumi.” See `licenses/third_party/` in the repository.
       </p>
     </footer>
   </div>

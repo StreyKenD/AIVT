@@ -1,4 +1,4 @@
-"""Safety configuration assets for filtros de conteúdo."""
+"""Safety configuration assets for content filters."""
 
 from importlib.resources import files
 from typing import Iterable

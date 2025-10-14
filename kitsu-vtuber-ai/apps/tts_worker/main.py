@@ -15,7 +15,7 @@ async def _bootstrap_jobs(service: TTSService) -> None:
     await asyncio.sleep(1.0)
     result = await service.enqueue("Hello world", voice=None)
     logger.info(
-        "Job de teste concluído voice=%s cached=%s latency=%.2fms",
+        "Test job finished voice=%s cached=%s latency=%.2fms",
         result.voice,
         result.cached,
         result.latency_ms,

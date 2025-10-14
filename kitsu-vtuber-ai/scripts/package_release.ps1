@@ -43,10 +43,10 @@ Copy-Item "kitsu-vtuber-ai/README.md" -Destination $bundleRoot -Force
 Copy-Item "kitsu-vtuber-ai/.env.example" -Destination $bundleRoot -Force
 
 $notes = @()
-$notes += "Release gerada em $([DateTime]::UtcNow.ToString('u'))"
-$notes += "Scripts inclusos: run_all_no_docker.ps1, service_manager.ps1, package_release.ps1"
-$notes += "Consulte RUN_FIRST.md (seções 9-12) para checklist de QA e piloto."
-$notes += "Licenças obrigatórias em licenses/third_party/"
+$notes += "Release generated at $([DateTime]::UtcNow.ToString('u'))"
+$notes += "Included scripts: run_all_no_docker.ps1, service_manager.ps1, package_release.ps1"
+$notes += "See RUN_FIRST.md (sections 9-12) for the QA and pilot checklist."
+$notes += "Required licenses in licenses/third_party/"
 $notesPath = Join-Path $bundleRoot "RELEASE_NOTES.txt"
 $notes | Set-Content -Path $notesPath -Encoding UTF8
 
@@ -56,9 +56,9 @@ if ($Zip) {
         Remove-Item $zipPath -Force
     }
     Compress-Archive -Path (Join-Path $bundleRoot '*') -DestinationPath $zipPath -Force
-    Write-Host "Pacote ZIP gerado em $zipPath"
+    Write-Host "ZIP package created at $zipPath"
 } else {
-    Write-Host "Bundle disponível em $bundleRoot"
+    Write-Host "Bundle available at $bundleRoot"
 }
 
 Pop-Location

@@ -1,23 +1,23 @@
 # AGENTS.md
 
-## Escopo
-Arquivos neste diretório descrevem a API e UI de telemetria do projeto Kitsu.exe. Siga as diretrizes abaixo ao modificar qualquer arquivo sob `kitsu-telemetry/`.
+## Scope
+Files in this directory describe the telemetry API and UI for the Kitsu.exe project. Follow the guidelines below when modifying any file under `kitsu-telemetry/`.
 
-## Estilo geral
-- Prefira código assíncrono e digitado (type hints explícitos em Python e TypeScript).
-- Utilize nomes autoexplicativos e comentários curtos apenas quando necessário.
-- Mantenha a documentação em português.
+## General style
+- Prefer asynchronous, typed code (explicit type hints in Python and TypeScript).
+- Use self-descriptive names and keep comments short and purposeful.
+- Keep the documentation in English.
 
 ## Backend (Python)
-- Use FastAPI com rotas claras (`/health`, `/events`, `/events/export`).
-- Persistência via SQLite usando `aiosqlite`; inicialize a base na inicialização do app.
-- Exporte CSV em streaming (`text/csv`) para evitar carregar tudo em memória.
+- Use FastAPI with clear routes (`/health`, `/events`, `/events/export`).
+- Persist data with SQLite using `aiosqlite`; initialize the database when the app starts.
+- Stream CSV exports (`text/csv`) to avoid loading everything into memory.
 
 ## Frontend (SvelteKit)
-- UI baseada em Tailwind CSS.
-- Crie componentes acessíveis (atributos `aria-*` quando fizer sentido).
-- Mock de WebSocket deve permitir testes locais sem backend em tempo real.
+- UI built with Tailwind CSS.
+- Create accessible components (add `aria-*` attributes when appropriate).
+- The WebSocket mock must allow local testing without a real-time backend.
 
-## Testes
-- Garanta que os testes possam rodar com `pytest -q` na raiz do repositório.
-- Inclua smoke tests para a importação do app pelo Uvicorn e para a exportação CSV.
+## Tests
+- Ensure the test suite runs with `pytest -q` at the repository root.
+- Include smoke tests for loading the app via Uvicorn and for the CSV export.

@@ -15,7 +15,7 @@ _NUM_BACKUPS = 7
 
 
 class JsonFormatter(logging.Formatter):
-    """Formatter que serializa registros de log em JSON."""
+    """Formatter that serializes log records to JSON."""
 
     def __init__(self, service_name: str) -> None:
         super().__init__()
@@ -65,7 +65,7 @@ def configure_json_logging(
     level: int | str = logging.INFO,
     stream: IO[str] | None = None,
 ) -> None:
-    """Configura logging estruturado (JSON) para o serviço informado."""
+    """Configures structured (JSON) logging for the provided service."""
 
     name_to_level = getattr(logging, "_nameToLevel", {})
     env_level = os.getenv("LOG_LEVEL")
@@ -86,7 +86,7 @@ def configure_json_logging(
         root.removeHandler(handler)
         try:
             handler.close()
-        except Exception:  # pragma: no cover - fechamento defensivo
+        except Exception:  # pragma: no cover - defensive close
             pass
 
     formatter = JsonFormatter(service_name)
