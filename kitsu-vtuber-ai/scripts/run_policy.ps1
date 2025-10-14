@@ -3,10 +3,10 @@ param(
 )
 
 $serviceManager = Join-Path $PSScriptRoot 'service_manager.ps1'
-$host = if ($env:POLICY_HOST) { $env:POLICY_HOST } else { '0.0.0.0' }
-$port = if ($env:POLICY_PORT) { $env:POLICY_PORT } else { '8081' }
+$listenHost = if ($env:POLICY_HOST) { $env:POLICY_HOST } else { '0.0.0.0' }
+$listenPort = if ($env:POLICY_PORT) { $env:POLICY_PORT } else { '8081' }
 
-$arguments = @('run', 'uvicorn', 'apps.policy_worker.main:app', '--host', $host, '--port', $port)
+$arguments = @('run', 'uvicorn', 'apps.policy_worker.main:app', '--host', $listenHost, '--port', $listenPort)
 if ($env:UVICORN_RELOAD -eq '1') {
     $arguments += '--reload'
 }
