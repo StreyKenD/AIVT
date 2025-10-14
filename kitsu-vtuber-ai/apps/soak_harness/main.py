@@ -131,11 +131,15 @@ class SoakHarness:
         orch_client, created_orch = await self._ensure_orchestrator_client()
         policy_client, created_policy = await self._ensure_policy_client()
         telemetry_client = self._telemetry_client
-        telemetry_http, created_telemetry_http = await self._ensure_telemetry_http_client()
+        telemetry_http, created_telemetry_http = (
+            await self._ensure_telemetry_http_client()
+        )
 
         try:
             last_status = await self._fetch_status(orch_client)
-            persona = last_status.get("persona", {}) if isinstance(last_status, dict) else {}
+            persona = (
+                last_status.get("persona", {}) if isinstance(last_status, dict) else {}
+            )
             chaos = float(persona.get("chaos_level", 0.35))
             energy = float(persona.get("energy", 0.6))
             family_mode = bool(persona.get("family_mode", True))
@@ -177,7 +181,9 @@ class SoakHarness:
                     last_status = await self._fetch_status(orch_client)
                     self._assert_modules_healthy(last_status)
 
-                except Exception as exc:  # pragma: no cover - guard para tempo de execução real
+                except (
+                    Exception
+                ) as exc:  # pragma: no cover - guard para tempo de execução real
                     record.status = "error"
                     record.error = str(exc)
                     failures.append(
@@ -237,7 +243,9 @@ class SoakHarness:
         self._policy_client = client
         return client, True
 
-    async def _ensure_telemetry_http_client(self) -> Tuple[Optional[httpx.AsyncClient], bool]:
+    async def _ensure_telemetry_http_client(
+        self,
+    ) -> Tuple[Optional[httpx.AsyncClient], bool]:
         if not self._telemetry_url:
             return None, False
         if self._telemetry_http_client is not None:
@@ -249,7 +257,9 @@ class SoakHarness:
 
     async def _submit_chat(self, client: httpx.AsyncClient, prompt: str) -> None:
         headers = self._orchestrator_headers()
-        response = await client.post("/ingest/chat", json={"role": "user", "text": prompt}, headers=headers)
+        response = await client.post(
+            "/ingest/chat", json={"role": "user", "text": prompt}, headers=headers
+        )
         response.raise_for_status()
 
     async def _call_policy(
@@ -292,7 +302,9 @@ class SoakHarness:
             raise RuntimeError("Policy worker não retornou evento final")
         return final_payload
 
-    async def _request_tts(self, client: httpx.AsyncClient, text: str) -> Optional[float]:
+    async def _request_tts(
+        self, client: httpx.AsyncClient, text: str
+    ) -> Optional[float]:
         if not text:
             return None
         headers = self._orchestrator_headers()
@@ -315,7 +327,9 @@ class SoakHarness:
         headers: Dict[str, str] = {"Accept": "application/json"}
         if self._telemetry_api_key:
             headers["X-API-Key"] = self._telemetry_api_key
-        response = await client.get("/metrics/latest", headers=headers, params={"window_seconds": 300})
+        response = await client.get(
+            "/metrics/latest", headers=headers, params={"window_seconds": 300}
+        )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -326,7 +340,9 @@ class SoakHarness:
         modules = status_payload.get("modules")
         if not isinstance(modules, dict):
             raise RuntimeError("Snapshot de módulos inválido")
-        unhealthy = [name for name, info in modules.items() if info.get("state") != "online"]
+        unhealthy = [
+            name for name, info in modules.items() if info.get("state") != "online"
+        ]
         if unhealthy:
             raise RuntimeError(f"Módulos fora do ar: {', '.join(unhealthy)}")
 
@@ -338,15 +354,25 @@ class SoakHarness:
         status_payload: Optional[Dict[str, Any]],
         telemetry_snapshot: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        policy_latencies = [rec.policy_latency_ms for rec in records if rec.policy_latency_ms is not None]
-        tts_latencies = [rec.tts_latency_ms for rec in records if rec.tts_latency_ms is not None]
+        policy_latencies = [
+            rec.policy_latency_ms
+            for rec in records
+            if rec.policy_latency_ms is not None
+        ]
+        tts_latencies = [
+            rec.tts_latency_ms for rec in records if rec.tts_latency_ms is not None
+        ]
 
         def _aggregate(values: Sequence[float]) -> Dict[str, Optional[float]]:
             if not values:
                 return {"avg": None, "p95": None, "max": None}
             return {
                 "avg": round(statistics.fmean(values), 2),
-                "p95": round(_percentile(values, 95.0), 2) if len(values) > 1 else round(values[0], 2),
+                "p95": (
+                    round(_percentile(values, 95.0), 2)
+                    if len(values) > 1
+                    else round(values[0], 2)
+                ),
                 "max": round(max(values), 2),
             }
 
@@ -414,7 +440,9 @@ async def _async_main(args: argparse.Namespace) -> int:
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         logger.info("Resumo salvo em %s", output_path)
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -422,7 +450,9 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Executa o soak test de 2h da Kitsu.exe")
+    parser = argparse.ArgumentParser(
+        description="Executa o soak test de 2h da Kitsu.exe"
+    )
     parser.add_argument(
         "--orchestrator-url",
         default=os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8000"),
@@ -430,7 +460,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--policy-url",
-        default=os.getenv("SOAK_POLICY_URL") or os.getenv("POLICY_URL") or "http://127.0.0.1:8081",
+        default=os.getenv("SOAK_POLICY_URL")
+        or os.getenv("POLICY_URL")
+        or "http://127.0.0.1:8081",
         help="Endpoint base do policy worker",
     )
     parser.add_argument(

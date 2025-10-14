@@ -3,7 +3,7 @@ import os
 import sys
 import platform
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 
 """
 Supervisor leve para desenvolvimento local.
@@ -26,30 +26,38 @@ Env úteis:
 
 IS_WINDOWS = platform.system().lower().startswith("win")
 
+
 @dataclass
 class Service:
     name: str
     cmd: str
+
 
 def build_services(use_poetry: bool) -> List[Service]:
     orch_host = os.getenv("ORCH_HOST", "127.0.0.1")
     orch_port = os.getenv("ORCH_PORT", "8000")
 
     services: List[Tuple[str, str]] = [
-        ("orchestrator",      f"uvicorn apps.orchestrator.main:app --reload --host {orch_host} --port {orch_port}"),
-        ("control_panel",     "uvicorn apps.control_panel_backend.main:app --reload"),
-        ("asr_worker",        "python -m apps.asr_worker.main"),
-        ("policy_worker",     "python -m apps.policy_worker.main"),
-        ("tts_worker",        "python -m apps.tts_worker.main"),
+        (
+            "orchestrator",
+            f"uvicorn apps.orchestrator.main:app --reload --host {orch_host} --port {orch_port}",
+        ),
+        ("control_panel", "uvicorn apps.control_panel_backend.main:app --reload"),
+        ("asr_worker", "python -m apps.asr_worker.main"),
+        ("policy_worker", "python -m apps.policy_worker.main"),
+        ("tts_worker", "python -m apps.tts_worker.main"),
         ("avatar_controller", "python -m apps.avatar_controller.main"),
-        ("obs_controller",    "python -m apps.obs_controller.main"),
-        ("twitch_ingest",     "python -m apps.twitch_ingest.main"),
+        ("obs_controller", "python -m apps.obs_controller.main"),
+        ("twitch_ingest", "python -m apps.twitch_ingest.main"),
     ]
     if use_poetry:
         services = [(n, f"poetry run {c}") for n, c in services]
     return [Service(n, c) for n, c in services]
 
-async def run_service(svc: Service, cwd: str, procs: Dict[str, asyncio.subprocess.Process]):
+
+async def run_service(
+    svc: Service, cwd: str, procs: Dict[str, asyncio.subprocess.Process]
+):
     # shell=True para interpretar a linha completa com pipes/redireções se necessário
     proc = await asyncio.create_subprocess_shell(
         svc.cmd,
@@ -74,6 +82,7 @@ async def run_service(svc: Service, cwd: str, procs: Dict[str, asyncio.subproces
         rc = await proc.wait()
         print(f"[SUP] {svc.name} exited code={rc}")
 
+
 async def main():
     use_poetry = "-UsePoetry" in sys.argv
     repo_root = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
@@ -95,6 +104,7 @@ async def main():
     finally:
         # tentativa de shutdown limpa
         await terminate_all(procs)
+
 
 async def terminate_all(procs: Dict[str, asyncio.subprocess.Process]):
     if not procs:
@@ -125,6 +135,7 @@ async def terminate_all(procs: Dict[str, asyncio.subprocess.Process]):
                     p.kill()
             except Exception as e:
                 print(f"[SUP] error kill {name}: {e}")
+
 
 if __name__ == "__main__":
     try:

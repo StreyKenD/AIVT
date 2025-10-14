@@ -25,8 +25,12 @@ class ModerationPipeline:
         post_blocklist: Sequence[str] | None = None,
         fallback_key: str = "blocked",
     ) -> None:
-        self._pre_patterns = self._compile(pre_blocklist or tuple(load_lines("blocklist_pre.txt")))
-        self._post_patterns = self._compile(post_blocklist or tuple(load_lines("blocklist_post.txt")))
+        self._pre_patterns = self._compile(
+            pre_blocklist or tuple(load_lines("blocklist_pre.txt"))
+        )
+        self._post_patterns = self._compile(
+            post_blocklist or tuple(load_lines("blocklist_post.txt"))
+        )
         self._fallbacks = load_json("fallbacks.json")
         self._fallback_key = fallback_key
 
@@ -38,7 +42,9 @@ class ModerationPipeline:
             patterns.append(re.compile(rf"(?i)\b{escaped}\b"))
         return patterns
 
-    def _match(self, text: str, patterns: Sequence[re.Pattern[str]]) -> re.Pattern[str] | None:
+    def _match(
+        self, text: str, patterns: Sequence[re.Pattern[str]]
+    ) -> re.Pattern[str] | None:
         for pattern in patterns:
             if pattern.search(text):
                 return pattern

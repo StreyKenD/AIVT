@@ -148,7 +148,9 @@ class ASREvent(BaseModel):
     duration_ms: Optional[float] = Field(None, ge=0.0)
 
     @validator("ended_at")
-    def validate_timestamps(cls, value: float, values: Dict[str, Any]) -> float:  # noqa: D417
+    def validate_timestamps(
+        cls, value: float, values: Dict[str, Any]
+    ) -> float:  # noqa: D417
         started_at = values.get("started_at")
         if started_at is not None and value < started_at:
             raise ValueError("ended_at must be greater than or equal to started_at")

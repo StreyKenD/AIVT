@@ -1,7 +1,6 @@
 """Safety configuration assets for filtros de conteúdo."""
 
 from importlib.resources import files
-from pathlib import Path
 from typing import Iterable
 
 PACKAGE_ROOT = files(__package__)

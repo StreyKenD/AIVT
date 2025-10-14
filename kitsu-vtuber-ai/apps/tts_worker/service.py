@@ -35,7 +35,9 @@ class TTSJob:
 
 
 class Synthesizer(Protocol):
-    async def synthesize(self, text: str, voice: Optional[str], destination: Path) -> Path:
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
         """Generate audio at the destination path and return the file path."""
 
 
@@ -87,13 +89,17 @@ class TTSDiskCache:
             "latency_ms": result.latency_ms,
             "visemes": result.visemes,
         }
-        meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        meta_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 class CoquiSynthesizer:
     def __init__(self) -> None:
         module = self._load_module()
-        self._tts = module.TTS(model_name=os.getenv("TTS_MODEL_NAME", "tts_models/en/vctk/vits"))
+        self._tts = module.TTS(
+            model_name=os.getenv("TTS_MODEL_NAME", "tts_models/en/vctk/vits")
+        )
         self._device = os.getenv("TTS_DEVICE", "cuda")
 
     @staticmethod
@@ -104,7 +110,9 @@ class CoquiSynthesizer:
             raise RuntimeError("Coqui TTS não está instalado") from exc
         return type("Module", (), {"TTS": CoquiTTS})
 
-    async def synthesize(self, text: str, voice: Optional[str], destination: Path) -> Path:
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
         loop = asyncio.get_running_loop()
 
         def _run() -> None:
@@ -127,7 +135,9 @@ class PiperSynthesizer:
         if not self._binary:
             raise RuntimeError("PIPER_PATH não configurado")
 
-    async def synthesize(self, text: str, voice: Optional[str], destination: Path) -> Path:
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
         cmd = [
             str(self._binary),
             "--model",
@@ -150,7 +160,9 @@ class PiperSynthesizer:
         process.stdin.close()
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            raise RuntimeError(f"Piper falhou: {stderr.decode('utf-8', errors='ignore')}")
+            raise RuntimeError(
+                f"Piper falhou: {stderr.decode('utf-8', errors='ignore')}"
+            )
         if stdout:
             logger.debug("Piper stdout: %s", stdout[:120])
         return destination
@@ -159,7 +171,9 @@ class PiperSynthesizer:
 class SilentSynthesizer:
     """Fallback determinístico usado em ambientes de teste."""
 
-    async def synthesize(self, text: str, voice: Optional[str], destination: Path) -> Path:
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
         duration = max(1.0, min(6.0, len(text) / 15))
         sample_rate = 22050
         total_frames = int(sample_rate * duration)
@@ -203,7 +217,9 @@ class TTSService:
         self._cancel_event = asyncio.Event()
         self._telemetry = telemetry or TelemetryClient.from_env(service="tts_worker")
 
-    async def enqueue(self, text: str, voice: Optional[str] = None, request_id: Optional[str] = None) -> TTSResult:
+    async def enqueue(
+        self, text: str, voice: Optional[str] = None, request_id: Optional[str] = None
+    ) -> TTSResult:
         loop = asyncio.get_running_loop()
         future: "asyncio.Future[TTSResult]" = loop.create_future()
         job = TTSJob(
@@ -300,7 +316,9 @@ class TTSService:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("Synthesizer %s falhou: %s", synthesizer.__class__.__name__, exc)
+                logger.warning(
+                    "Synthesizer %s falhou: %s", synthesizer.__class__.__name__, exc
+                )
                 continue
         raise RuntimeError("Nenhum sintetizador conseguiu gerar áudio")
 
@@ -329,7 +347,9 @@ class TTSService:
                 energy = 0.6
             elif char.isspace():
                 energy = 0.2
-            visemes.append({"time": round(time_cursor, 2), "rms": round(min(1.0, energy), 2)})
+            visemes.append(
+                {"time": round(time_cursor, 2), "rms": round(min(1.0, energy), 2)}
+            )
             time_cursor += step
         return visemes
 

@@ -2,8 +2,6 @@ import asyncio
 import json
 from typing import List
 
-import pytest
-
 from apps.avatar_controller.main import VTubeStudioClient
 
 

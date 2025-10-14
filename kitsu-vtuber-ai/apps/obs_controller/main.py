@@ -55,7 +55,9 @@ class OBSController:
                 logger.info("OBS connection established")
                 return
             except Exception as exc:  # pragma: no cover - runtime guard
-                logger.warning("OBS connection failed: %s (retrying in %.1fs)", exc, backoff)
+                logger.warning(
+                    "OBS connection failed: %s (retrying in %.1fs)", exc, backoff
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
@@ -83,12 +85,19 @@ class OBSController:
         if self._client is None:
             return
         logger.info(
-            "Toggling OBS filter %s on %s -> %s", filter_name, source, "on" if enabled else "off"
+            "Toggling OBS filter %s on %s -> %s",
+            filter_name,
+            source,
+            "on" if enabled else "off",
         )
         try:
             self._client.call(
                 "SetSourceFilterEnabled",
-                {"sourceName": source, "filterName": filter_name, "filterEnabled": enabled},
+                {
+                    "sourceName": source,
+                    "filterName": filter_name,
+                    "filterEnabled": enabled,
+                },
             )
         except Exception as exc:  # pragma: no cover - runtime guard
             logger.warning("Failed to toggle filter: %s", exc)
@@ -96,7 +105,9 @@ class OBSController:
 
     async def panic(self) -> None:
         logger.warning("OBS panic macro triggered")
-        await self.toggle_filter("Microphone", os.getenv("OBS_PANIC_FILTER", "HardMute"), True)
+        await self.toggle_filter(
+            "Microphone", os.getenv("OBS_PANIC_FILTER", "HardMute"), True
+        )
 
 
 async def run_controller() -> None:

@@ -19,7 +19,9 @@ def test_receive_asr_event_publishes_to_broker_and_updates_state() -> None:
         token, queue = await module.broker.subscribe()
         try:
             transport = ASGITransport(app=module.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 now = time.time()
                 payload = {
                     "type": "asr_final",

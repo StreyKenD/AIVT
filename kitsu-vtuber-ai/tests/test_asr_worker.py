@@ -153,7 +153,9 @@ class _PyAudioModuleStub:
 
 
 def test_gather_devices_merges_backends() -> None:
-    entries = gather_devices(sounddevice=_SoundDeviceStub(), pyaudio=_PyAudioModuleStub())
+    entries = gather_devices(
+        sounddevice=_SoundDeviceStub(), pyaudio=_PyAudioModuleStub()
+    )
     assert entries
     names = {entry.name for entry in entries}
     assert {"Mic 2", "Mic 3", "Focusrite", "USB Mic"}.issubset(names)

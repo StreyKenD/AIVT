@@ -50,7 +50,9 @@ class JsonFormatter(logging.Formatter):
             payload["exception"] = self.formatException(record.exc_info)
 
         extras = {
-            key: value for key, value in record.__dict__.items() if key not in self._reserved
+            key: value
+            for key, value in record.__dict__.items()
+            if key not in self._reserved
         }
         if extras:
             payload["extra"] = extras

@@ -25,14 +25,11 @@ WebSocketFactory = Callable[[str], Awaitable["WebSocketLike"]]
 
 
 class WebSocketLike(Protocol):  # type: ignore[name-defined]
-    async def send(self, data: str) -> None:
-        ...
+    async def send(self, data: str) -> None: ...
 
-    async def recv(self) -> str:
-        ...
+    async def recv(self) -> str: ...
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -77,7 +74,9 @@ class VTubeStudioClient:
             if self._connected:
                 return
             if websockets is None and self._factory is None:
-                logger.warning("websockets not installed; running VTS client in dry mode")
+                logger.warning(
+                    "websockets not installed; running VTS client in dry mode"
+                )
                 self._connected = True
                 return
             factory = self._factory or websockets.connect  # type: ignore[union-attr]

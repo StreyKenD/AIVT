@@ -112,7 +112,9 @@ def build_transcriber(config: ASRConfig) -> Transcriber:
     if numpy_module is None:  # pragma: no cover - dependency guard
         raise RuntimeError("numpy is required alongside faster-whisper")
 
-    compute_type = config.compute_type or ("int8_float16" if config.device_preference == "cuda" else "int8")
+    compute_type = config.compute_type or (
+        "int8_float16" if config.device_preference == "cuda" else "int8"
+    )
     device_candidates = [config.device_preference]
     if config.device_preference != "cpu":
         device_candidates.append("cpu")
@@ -147,7 +149,10 @@ class FasterWhisperTranscriber:
         if not audio:
             return TranscriptionResult(text="", confidence=None, language=None)
         np_module = self._np
-        audio_array = np_module.frombuffer(audio, dtype=np_module.int16).astype(np_module.float32) / 32768.0
+        audio_array = (
+            np_module.frombuffer(audio, dtype=np_module.int16).astype(np_module.float32)
+            / 32768.0
+        )
         segments_iter, info = self._model.transcribe(  # type: ignore[attr-defined]
             audio_array,
             beam_size=1,
@@ -257,7 +262,9 @@ class SoundDeviceAudioSource:
             self._stream.close()
             self._stream = None
 
-    def _on_frame(self, indata, frames, _time, status) -> None:  # pragma: no cover - external callback
+    def _on_frame(
+        self, indata, frames, _time, status
+    ) -> None:  # pragma: no cover - external callback
         if status:
             logger.debug("sounddevice status: %s", status)
         data = bytes(indata)
@@ -400,7 +407,10 @@ class SpeechPipeline:
         now = time.time()
         if now - self._segment_started_at < 0.1:
             return
-        if self._last_partial_at and now - self._last_partial_at < self._config.partial_interval:
+        if (
+            self._last_partial_at
+            and now - self._last_partial_at < self._config.partial_interval
+        ):
             return
         await self._emit_partial(now)
 
@@ -559,7 +569,9 @@ async def acquire_audio_source(config: ASRConfig) -> AsyncIterator[AudioSource]:
                 await backend.stop()
             return
         except Exception as exc:  # pragma: no cover - device guard
-            logger.warning("Falha ao iniciar captura com %s: %s", name, exc, exc_info=True)
+            logger.warning(
+                "Falha ao iniciar captura com %s: %s", name, exc, exc_info=True
+            )
             with contextlib.suppress(Exception):
                 await backend.stop()
 

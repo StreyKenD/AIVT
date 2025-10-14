@@ -92,9 +92,13 @@ class OrchestratorBridge:
 class TwitchCommandRouter:
     """Parses Twitch commands and dispatches to orchestrator actions."""
 
-    _STYLE_RE = re.compile(r"^(?P<style>\w+)(\s+(?P<chaos>\d+(?:\.\d+)?))?(\s+(?P<energy>\d+(?:\.\d+)?))?$")
+    _STYLE_RE = re.compile(
+        r"^(?P<style>\w+)(\s+(?P<chaos>\d+(?:\.\d+)?))?(\s+(?P<energy>\d+(?:\.\d+)?))?$"
+    )
 
-    def __init__(self, bridge: OrchestratorBridge, cooldown_seconds: float = 3.0) -> None:
+    def __init__(
+        self, bridge: OrchestratorBridge, cooldown_seconds: float = 3.0
+    ) -> None:
         self._bridge = bridge
         self._handlers: Dict[str, CommandHandler] = {}
         self._rate_limiter = RateLimiter(cooldown_seconds)
@@ -133,14 +137,18 @@ class TwitchCommandRouter:
         await self._bridge.toggle_tts(True)
 
     async def _handle_scene(self, message: ChatMessage) -> None:
-        scene = message.content.strip() or os.getenv("TWITCH_DEFAULT_SCENE", "Just Chatting")
+        scene = message.content.strip() or os.getenv(
+            "TWITCH_DEFAULT_SCENE", "Just Chatting"
+        )
         logger.info("[%s] scene=%s", message.author, scene)
         await self._bridge.set_scene(scene)
 
     async def _handle_style(self, message: ChatMessage) -> None:
         match = self._STYLE_RE.match(message.content.strip())
         if not match:
-            logger.info("[%s] invalid style payload: %s", message.author, message.content)
+            logger.info(
+                "[%s] invalid style payload: %s", message.author, message.content
+            )
             return
         style = match.group("style")
         chaos = match.group("chaos")
@@ -208,7 +216,9 @@ async def run() -> None:
         async def event_message(self, message):  # pragma: no cover - twitch runtime
             if message.echo:
                 return
-            await router.handle(ChatMessage(author=message.author.name, content=message.content))
+            await router.handle(
+                ChatMessage(author=message.author.name, content=message.content)
+            )
 
     bot = TwitchBot()
     try:

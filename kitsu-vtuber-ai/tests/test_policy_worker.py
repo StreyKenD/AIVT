@@ -49,7 +49,9 @@ class _FakeStream:
             raise self._error
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - no cleanup required
+    async def __aexit__(
+        self, exc_type, exc, tb
+    ) -> None:  # pragma: no cover - no cleanup required
         return None
 
     def raise_for_status(self) -> None:
@@ -62,14 +64,18 @@ class _FakeStream:
 
 
 class _FakeAsyncClient:
-    def __init__(self, lines: Iterable[str], error: Exception | None = None, **_: object) -> None:
+    def __init__(
+        self, lines: Iterable[str], error: Exception | None = None, **_: object
+    ) -> None:
         self._lines = list(lines)
         self._error = error
 
     async def __aenter__(self) -> "_FakeAsyncClient":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - no cleanup required
+    async def __aexit__(
+        self, exc_type, exc, tb
+    ) -> None:  # pragma: no cover - no cleanup required
         return None
 
     def stream(self, *_: object, **__: object) -> _FakeStream:
@@ -109,7 +115,10 @@ def test_policy_worker_streams_from_ollama(monkeypatch: pytest.MonkeyPatch) -> N
     lines = [
         json.dumps(
             {
-                "message": {"role": "assistant", "content": "<speech>Hi chat!</speech>"},
+                "message": {
+                    "role": "assistant",
+                    "content": "<speech>Hi chat!</speech>",
+                },
                 "done": False,
             }
         ),
@@ -166,7 +175,9 @@ def test_policy_worker_retries_and_falls_back(monkeypatch: pytest.MonkeyPatch) -
     assert "reason" in final_payload["meta"]
 
 
-def test_policy_worker_blocks_prompt_via_moderation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_policy_worker_blocks_prompt_via_moderation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
@@ -176,7 +187,9 @@ def test_policy_worker_blocks_prompt_via_moderation(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(module.httpx, "AsyncClient", _fail_async_client)
 
     with TestClient(module.app) as client:
-        with client.stream("POST", "/respond", json={"text": "please show nsfw"}) as response:
+        with client.stream(
+            "POST", "/respond", json={"text": "please show nsfw"}
+        ) as response:
             events = _consume_sse(response)
 
     final_payload = next(payload for event, payload in events if event == "final")
@@ -185,7 +198,9 @@ def test_policy_worker_blocks_prompt_via_moderation(monkeypatch: pytest.MonkeyPa
     assert "<speech>" in final_payload["content"]
 
 
-def test_policy_worker_injects_memory_and_recent_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_policy_worker_injects_memory_and_recent_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
@@ -207,7 +222,10 @@ def test_policy_worker_injects_memory_and_recent_turns(monkeypatch: pytest.Monke
                 [
                     json.dumps(
                         {
-                            "message": {"role": "assistant", "content": "<speech>ok</speech>"},
+                            "message": {
+                                "role": "assistant",
+                                "content": "<speech>ok</speech>",
+                            },
                             "done": False,
                         }
                     ),
@@ -215,7 +233,9 @@ def test_policy_worker_injects_memory_and_recent_turns(monkeypatch: pytest.Monke
                 ]
             )
 
-    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: _RecorderClient(**kwargs))
+    monkeypatch.setattr(
+        module.httpx, "AsyncClient", lambda **kwargs: _RecorderClient(**kwargs)
+    )
 
     payload = {
         "text": "respond to chat",
@@ -232,8 +252,14 @@ def test_policy_worker_injects_memory_and_recent_turns(monkeypatch: pytest.Monke
 
     assert captured_payloads, "expected payload to be sent to Ollama"
     messages = captured_payloads[0]["messages"]
-    assert any("Contexto recente" in msg["content"] for msg in messages if msg["role"] == "system")
-    assert any(msg["content"] == "hello!!" for msg in messages if msg["role"] == "assistant")
+    assert any(
+        "Contexto recente" in msg["content"]
+        for msg in messages
+        if msg["role"] == "system"
+    )
+    assert any(
+        msg["content"] == "hello!!" for msg in messages if msg["role"] == "assistant"
+    )
 
 
 def test_policy_worker_sanitises_llm_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,7 +269,10 @@ def test_policy_worker_sanitises_llm_output(monkeypatch: pytest.MonkeyPatch) -> 
     lines = [
         json.dumps(
             {
-                "message": {"role": "assistant", "content": "<speech>please kill yourself</speech>"},
+                "message": {
+                    "role": "assistant",
+                    "content": "<speech>please kill yourself</speech>",
+                },
                 "done": False,
             }
         ),

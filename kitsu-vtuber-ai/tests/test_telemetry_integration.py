@@ -24,7 +24,9 @@ def test_tts_service_emits_metrics(monkeypatch, tmp_path) -> None:
         service = TTSService(telemetry=telemetry)
         worker = asyncio.create_task(service.worker())
         try:
-            result = await asyncio.wait_for(service.enqueue("konnichiwa chat"), timeout=5)
+            result = await asyncio.wait_for(
+                service.enqueue("konnichiwa chat"), timeout=5
+            )
             assert result.cached is False
             await asyncio.sleep(0)
             assert telemetry.calls, "Expected telemetry metric"

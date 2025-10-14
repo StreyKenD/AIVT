@@ -1,7 +1,5 @@
 import asyncio
 
-import pytest
-
 from apps.obs_controller import main as obs_module
 
 

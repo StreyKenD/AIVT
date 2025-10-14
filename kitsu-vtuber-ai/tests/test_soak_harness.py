@@ -55,12 +55,14 @@ def test_soak_harness_collects_summary() -> None:
                     },
                 },
             )
-        raise AssertionError(f"Unexpected orchestrator request: {request.method} {request.url}")
+        raise AssertionError(
+            f"Unexpected orchestrator request: {request.method} {request.url}"
+        )
 
     policy_payload = (
         "event: start\n"
         "data: {}\n\n"
-        'event: final\n'
+        "event: final\n"
         'data: {"content": "<speech>olá</speech><mood>kawaii</mood>", "latency_ms": 42.0, "source": "mock"}\n\n'
     )
 
@@ -93,7 +95,8 @@ def test_soak_harness_collects_summary() -> None:
             transport=httpx.MockTransport(policy_handler), base_url="http://policy"
         )
         telemetry_http = httpx.AsyncClient(
-            transport=httpx.MockTransport(telemetry_handler), base_url="http://telemetry"
+            transport=httpx.MockTransport(telemetry_handler),
+            base_url="http://telemetry",
         )
         telemetry_client = StubTelemetryClient()
 

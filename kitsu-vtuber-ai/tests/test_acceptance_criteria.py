@@ -30,14 +30,16 @@ def test_windows_stack_scripts_cover_all_services() -> None:
         assert script in content, f"{script} não referenciado em run_all_no_docker.ps1"
         assert (scripts_root / script).exists(), f"{script} ausente em scripts/"
 
-    assert "ValidateSet(\"start\", \"stop\", \"status\")" in content
+    assert 'ValidateSet("start", "stop", "status")' in content
 
 
 class _FakeResponse:
     def __init__(self, json_payload: Dict[str, Any] | None = None) -> None:
         self._json = json_payload or {}
 
-    def raise_for_status(self) -> None:  # pragma: no cover - mantido para compatibilidade
+    def raise_for_status(
+        self,
+    ) -> None:  # pragma: no cover - mantido para compatibilidade
         return
 
     def json(self) -> Dict[str, Any]:
@@ -49,7 +51,9 @@ class _MockOrchestratorClient:
         self.ingest_payloads: List[Dict[str, Any]] = []
         self.tts_payloads: List[Dict[str, Any]] = []
 
-    async def post(self, path: str, json: Dict[str, Any], headers: Dict[str, str] | None = None):
+    async def post(
+        self, path: str, json: Dict[str, Any], headers: Dict[str, str] | None = None
+    ):
         if path == "/ingest/chat":
             self.ingest_payloads.append(json)
             return _FakeResponse({"status": "accepted"})
@@ -87,7 +91,9 @@ class _MockPolicyStream:
     async def __aenter__(self) -> "_MockPolicyStream":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - não utilizado
+    async def __aexit__(
+        self, exc_type, exc, tb
+    ) -> None:  # pragma: no cover - não utilizado
         return None
 
     def raise_for_status(self) -> None:
@@ -110,7 +116,7 @@ class _MockPolicyClient:
             "data: {}",
             "",
             "event: final",
-            "data: {\"content\": \"<speech>olá</speech>\", \"latency_ms\": 420.0, \"source\": \"ollama\"}",
+            'data: {"content": "<speech>olá</speech>", "latency_ms": 420.0, "source": "ollama"}',
             "",
         ]
         return _MockPolicyStream(payload)

@@ -6,24 +6,6 @@ readme = "README.md"
 authors = [{ name = "Kitsu Team", email = "devs@example.com" }]
 requires-python = ">=3.11,<3.12"
 
-# ✅ DEPENDÊNCIAS: array de strings PEP 508 (não tabela)
-dependencies = [
-  "aiosqlite>=0.19.0,<1.0.0",
-  "fastapi>=0.110.0,<1.0.0",
-  "faster-whisper>=1.0.0,<2.0.0",
-  "httpx>=0.27.0,<1.0.0",
-  "numpy>=1.26.4,<3.0.0",
-  "obsws-python>=1.7.2,<2.0.0",
-  "pyaudio>=0.2.14,<0.3.0",
-  "pynvml>=11.5.0,<12.0.0",
-  "python-dotenv>=1.0.1,<2.0.0",
-  "sounddevice>=0.4.7,<0.5.0",
-  "tenacity>=8.2.3,<9.0.0",
-  "twitchio>=2.9.1,<3.0.0",
-  "TTS>=0.22.0,<1.0.0",
-  "uvicorn[standard]>=0.29.0,<1.0.0",
-]
-
 [tool.poetry]
 # Só o que é específico do Poetry
 packages = [
@@ -42,6 +24,10 @@ pytest = ">=8.4.2,<9.0.0"
 pytest-asyncio = ">=0.23.8,<1.0.0"
 ruff = ">=0.4.7,<1.0.0"
 
+
+[tool.poetry.dependencies]
+httpx = "^0.28.1"
+aiosqlite = "^0.21.0"
 [tool.mypy]
 ignore_missing_imports = true
 

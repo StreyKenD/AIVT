@@ -71,7 +71,9 @@ def _safe_query_pyaudio(pyaudio: object) -> Iterable[DeviceEntry]:
     if callable(get_default_info):
         with contextlib.suppress(Exception):
             default_info = get_default_info()
-            default_index = int(default_info.get("index")) if "index" in default_info else None
+            default_index = (
+                int(default_info.get("index")) if "index" in default_info else None
+            )
     try:
         get_count = getattr(instance, "get_device_count", None)
         if not callable(get_count):
@@ -108,7 +110,11 @@ def gather_devices(
     """Collect available audio input devices from optional backends."""
 
     entries: list[DeviceEntry] = []
-    sd_module = sounddevice if sounddevice is not None else load_module_if_available("sounddevice")
+    sd_module = (
+        sounddevice
+        if sounddevice is not None
+        else load_module_if_available("sounddevice")
+    )
     if sd_module is not None:
         with contextlib.suppress(Exception):
             entries.extend(_safe_query_sounddevice(sd_module))
@@ -159,7 +165,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     entries = gather_devices()
     if args.json:
-        print(json.dumps([asdict(entry) for entry in entries], ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                [asdict(entry) for entry in entries], ensure_ascii=False, indent=2
+            )
+        )
     else:
         print(_format_table(entries))
     return 0

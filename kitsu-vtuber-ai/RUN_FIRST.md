@@ -62,8 +62,9 @@ Execute a suíte mínima antes de subir qualquer alteração:
 ```bash
 poetry lock --check
 poetry run pytest -q
-poetry run ruff .
+poetry run ruff check .
 poetry run black --check .
+poetry run black .
 poetry run mypy
 ```
 > Sem Poetry, instale `pytest` e `pytest-asyncio` com `python -m pip install pytest pytest-asyncio` e execute `python -m pytest -q`.

@@ -4,8 +4,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import AsyncIterator, List, Tuple
 
-import pytest
-
 from apps.asr_worker.main import ASRConfig, SpeechPipeline, TranscriptionResult
 
 
@@ -63,8 +61,8 @@ def test_pipeline_emits_partial_and_final_events() -> None:
             device_preference="cpu",
             compute_type="int8",
         )
-        frame = (b"\x01\x00" * config.frame_samples)
-        silence = (b"\x00\x00" * config.frame_samples)
+        frame = b"\x01\x00" * config.frame_samples
+        silence = b"\x00\x00" * config.frame_samples
         frames = [frame] * 8 + [silence] * (config.silence_threshold_frames + 2)
         vad = PatternVAD(
             [True] * 8 + [False] * (config.silence_threshold_frames + 2),

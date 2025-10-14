@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -60,7 +60,9 @@ class ControlPanelGateway:
         response = await self._orch_client.get(path, headers=headers)
         data = _parse_json(response)
         if not isinstance(data, dict):
-            raise HTTPException(status_code=500, detail="Resposta inesperada do orquestrador")
+            raise HTTPException(
+                status_code=500, detail="Resposta inesperada do orquestrador"
+            )
         return data
 
     async def orchestrator_post(
@@ -70,7 +72,9 @@ class ControlPanelGateway:
         response = await self._orch_client.post(path, json=payload, headers=headers)
         data = _parse_json(response)
         if not isinstance(data, dict):
-            raise HTTPException(status_code=500, detail="Resposta inesperada do orquestrador")
+            raise HTTPException(
+                status_code=500, detail="Resposta inesperada do orquestrador"
+            )
         return data
 
     async def telemetry_get(
@@ -112,7 +116,8 @@ def _build_telemetry_headers() -> Dict[str, str]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gateway = ControlPanelGateway(_ORCHESTRATOR_URL, _TELEMETRY_URL)
     logger.info(
-        "Backend de controle pronto", extra={"orchestrator": _ORCHESTRATOR_URL, "telemetry": _TELEMETRY_URL}
+        "Backend de controle pronto",
+        extra={"orchestrator": _ORCHESTRATOR_URL, "telemetry": _TELEMETRY_URL},
     )
     app.state.gateway = gateway
     try:
@@ -175,7 +180,11 @@ async def telemetry_export(
     return StreamingResponse(_generator(), headers=headers, media_type="text/csv")
 
 
-@app.post("/control/panic", response_model=Dict[str, Any], status_code=status.HTTP_202_ACCEPTED)
+@app.post(
+    "/control/panic",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def control_panic(
     payload: PanicIn,
     gateway: ControlPanelGateway = Depends(get_gateway),

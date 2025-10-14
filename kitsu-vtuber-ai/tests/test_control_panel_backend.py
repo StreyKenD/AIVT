@@ -21,10 +21,17 @@ class StubGateway:
             "status": "ok",
             "persona": {"style": "kawaii"},
             "modules": {},
-            "control": {"tts_muted": False, "panic_at": None, "active_preset": "default", "panic_reason": None},
+            "control": {
+                "tts_muted": False,
+                "panic_at": None,
+                "active_preset": "default",
+                "panic_reason": None,
+            },
         }
 
-    async def orchestrator_post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def orchestrator_post(
+        self, path: str, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
         self.orchestrator_calls.append((f"POST {path}", payload))
         if path == "/control/mute":
             return {"type": "control.mute", "muted": payload.get("muted", False)}
@@ -32,19 +39,25 @@ class StubGateway:
             return {"type": "control.panic", "reason": payload.get("reason")}
         return {"type": "control.preset", "preset": payload.get("preset")}
 
-    async def telemetry_get(self, path: str, params: Dict[str, Any] | None = None) -> Any:
+    async def telemetry_get(
+        self, path: str, params: Dict[str, Any] | None = None
+    ) -> Any:
         params = params or {}
         self.telemetry_calls.append((path, params))
         if path == "/metrics/latest":
             return {"window_seconds": params.get("window_seconds", 300), "metrics": {}}
         return [
-            {"ts": "2025-10-10T10:00:00Z", "type": "soak.result", "payload": {"success": True}}
+            {
+                "ts": "2025-10-10T10:00:00Z",
+                "type": "soak.result",
+                "payload": {"success": True},
+            }
         ]
 
     async def telemetry_stream(self, path: str):
         self.telemetry_calls.append((path, {}))
         yield b"ts,type,json_payload\n"
-        yield b"2025-10-10T10:00:00Z,control.mute,{\"muted\": true}\n"
+        yield b'2025-10-10T10:00:00Z,control.mute,{"muted": true}\n'
 
 
 @pytest.fixture()

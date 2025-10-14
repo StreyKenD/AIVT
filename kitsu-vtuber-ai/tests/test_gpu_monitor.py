@@ -41,7 +41,9 @@ class FakeNVML:
     def nvmlDeviceGetTemperature(self, handle: int, sensor: int) -> int:  # noqa: N802
         return 60
 
-    def nvmlDeviceGetUtilizationRates(self, handle: int) -> SimpleNamespace:  # noqa: N802
+    def nvmlDeviceGetUtilizationRates(
+        self, handle: int
+    ) -> SimpleNamespace:  # noqa: N802
         return SimpleNamespace(gpu=75.0)
 
     def nvmlDeviceGetMemoryInfo(self, handle: int) -> SimpleNamespace:  # noqa: N802

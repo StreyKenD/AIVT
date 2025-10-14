@@ -42,6 +42,7 @@ async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> No
     except Exception as exc:  # pragma: no cover - telemetry guard
         logger.debug("Falha ao enviar métrica da policy: %s", exc)
 
+
 SYSTEM_PROMPT_TEMPLATE = """
 You are Kitsu.exe, a chaotic-but-kawaii VTuber fox streaming live.
 Stay upbeat, empathetic and playful while keeping the show PG-13 at all times.
@@ -66,7 +67,7 @@ FEW_SHOT_EXCHANGES: List[Dict[str, str]] = [
     },
     {
         "role": "assistant",
-        "content": "<speech>Oooh let\'s stage a surprise pillow ambush!! Soft chaos only!</speech><mood>chaotic</mood><actions>sparkle,wink</actions>",
+        "content": "<speech>Oooh let's stage a surprise pillow ambush!! Soft chaos only!</speech><mood>chaotic</mood><actions>sparkle,wink</actions>",
     },
 ]
 
@@ -80,7 +81,9 @@ def _family_mode(payload: "PolicyRequest") -> bool:
 def _wrap_safe_xml(text: str, mood: str = "kawaii") -> str:
     sanitized = html.escape(text.strip()) or "Vamos manter tudo fofinho!"
     actions = "smile" if mood == "kawaii" else "wink"
-    return f"<speech>{sanitized}</speech><mood>{mood}</mood><actions>{actions}</actions>"
+    return (
+        f"<speech>{sanitized}</speech><mood>{mood}</mood><actions>{actions}</actions>"
+    )
 
 
 class PolicyRequest(BaseModel):
@@ -148,7 +151,9 @@ def _tokenize_for_streaming(message: str) -> List[str]:
     return tokens
 
 
-def _build_persona_snapshot(payload: PolicyRequest, family_mode: bool) -> Dict[str, Any]:
+def _build_persona_snapshot(
+    payload: PolicyRequest, family_mode: bool
+) -> Dict[str, Any]:
     return {
         "style": payload.persona_style,
         "chaos_level": round(payload.chaos_level, 2),
@@ -186,7 +191,12 @@ def _extract_stats(metadata: Dict[str, Any]) -> Dict[str, Any]:
             stats[key] = round(float(value) / 1_000_000, 2)
         elif key.endswith("_count") and isinstance(value, (int, float)):
             stats[key] = value
-        elif key in {"total_duration", "load_duration", "prompt_eval_duration", "eval_duration"}:
+        elif key in {
+            "total_duration",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
+        }:
             stats[key] = round(float(value) / 1_000_000, 2)
         elif key in {"done_reason", "model"}:
             stats[key] = value
@@ -346,7 +356,7 @@ async def _stream_ollama_response(
 def build_mock_reply(payload: PolicyRequest) -> str:
     style = payload.persona_style.lower()
     if style == "chaotic":
-        speech = "Eeee! Let\'s cause some sparkly chaos while staying wholesome!"
+        speech = "Eeee! Let's cause some sparkly chaos while staying wholesome!"
         mood = "chaotic"
         actions = "wink,sparkle"
     else:
@@ -503,7 +513,9 @@ async def respond(payload: PolicyRequest) -> StreamingResponse:
         payload.energy,
         _family_mode(payload),
     )
-    return StreamingResponse(policy_event_generator(payload), media_type="text/event-stream")
+    return StreamingResponse(
+        policy_event_generator(payload), media_type="text/event-stream"
+    )
 
 
 if __name__ == "__main__":

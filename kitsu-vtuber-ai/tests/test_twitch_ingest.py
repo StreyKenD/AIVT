@@ -18,7 +18,9 @@ class FakeBridge:
         self.calls.append(("set_scene", (scene,), {}))
 
     async def update_persona(self, *, style, chaos, energy) -> None:
-        self.calls.append(("update_persona", (), {"style": style, "chaos": chaos, "energy": energy}))
+        self.calls.append(
+            ("update_persona", (), {"style": style, "chaos": chaos, "energy": energy})
+        )
 
     async def emit_chat(self, role: str, text: str) -> None:
         self.calls.append(("emit_chat", (role, text), {}))

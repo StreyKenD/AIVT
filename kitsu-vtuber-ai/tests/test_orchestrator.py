@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pytest
+
 pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
 from fastapi.testclient import TestClient
 from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
