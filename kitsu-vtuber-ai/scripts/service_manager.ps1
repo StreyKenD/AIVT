@@ -99,17 +99,17 @@ switch ($Action) {
             return
         }
 
-        $pid = [int](Get-Content $pidFile)
-        $process = Get-ServiceProcess -Pid $pid
+        $servicePid = [int](Get-Content $pidFile)
+        $process = Get-ServiceProcess -Pid $servicePid
         if (-not $process) {
-            Write-Warning "Process $pid for '${ServiceName}' is no longer running. Cleaning up PID file."
+            Write-Warning "Process $servicePid for '${ServiceName}' is no longer running. Cleaning up PID file."
             Remove-Item $pidFile -ErrorAction SilentlyContinue
             return
         }
 
-        Write-Host "[kitsu] Stopping ${ServiceName} (PID $pid)..." -ForegroundColor Yellow
+        Write-Host "[kitsu] Stopping ${ServiceName} (PID $servicePid)..." -ForegroundColor Yellow
         try {
-            Stop-Process -Id $pid -ErrorAction Stop
+            Stop-Process -Id $servicePid -ErrorAction Stop
             Write-Host "[kitsu] ${ServiceName} stopped."
         } catch {
             Write-Error "Failed to stop ${ServiceName}: $($_.Exception.Message)"
@@ -131,10 +131,10 @@ switch ($Action) {
             return
         }
 
-        $pid = [int](Get-Content $pidFile)
-        $process = Get-ServiceProcess -Pid $pid
+        $servicePid = [int](Get-Content $pidFile)
+        $process = Get-ServiceProcess -Pid $servicePid
         if ($process) {
-            Write-Host "[kitsu] ${ServiceName} running (PID $pid)." -ForegroundColor Green
+            Write-Host "[kitsu] ${ServiceName} running (PID $servicePid)." -ForegroundColor Green
             if (Test-Path $metaFile) {
                 try {
                     $meta = Get-Content $metaFile | ConvertFrom-Json
@@ -152,7 +152,7 @@ switch ($Action) {
                 }
             }
         } else {
-            Write-Host "[kitsu] ${ServiceName} has a stale PID file (PID $pid)." -ForegroundColor DarkYellow
+            Write-Host "[kitsu] ${ServiceName} has a stale PID file (PID $servicePid)." -ForegroundColor DarkYellow
             Remove-Item $pidFile -ErrorAction SilentlyContinue
             Remove-Item $metaFile -ErrorAction SilentlyContinue
         }
