@@ -23,11 +23,21 @@ pre-commit = ">=3.7.0,<4.0.0"
 pytest = ">=8.4.2,<9.0.0"
 pytest-asyncio = ">=0.23.8,<1.0.0"
 ruff = ">=0.4.7,<1.0.0"
+deptry = "^0.23.1"
 
 
 [tool.poetry.dependencies]
 httpx = "^0.28.1"
 aiosqlite = "^0.21.0"
+websockets = "^15.0.1"
+fastapi = "^0.119.0"
+pydantic = "^2.12.1"
+obsws-python = "^1.8.0"
+tenacity = "^9.1.2"
+uvicorn = "^0.37.0"
+tts = "^0.22.0"
+twitchio = "^3.1.0"
+pynvml = "^13.0.1"
 [tool.mypy]
 ignore_missing_imports = true
 
