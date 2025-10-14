@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, AsyncIterator, Dict, Generator, List
 
 import pytest
 
@@ -54,14 +54,14 @@ class StubGateway:
             }
         ]
 
-    async def telemetry_stream(self, path: str):
+    async def telemetry_stream(self, path: str) -> AsyncIterator[bytes]:
         self.telemetry_calls.append((path, {}))
         yield b"ts,type,json_payload\n"
         yield b'2025-10-10T10:00:00Z,control.mute,{"muted": true}\n'
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
     gateway = StubGateway()
 
     async def _override_gateway() -> StubGateway:

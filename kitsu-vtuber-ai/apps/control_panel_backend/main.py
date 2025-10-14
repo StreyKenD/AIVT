@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import status as http_status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -183,7 +184,7 @@ async def telemetry_export(
 @app.post(
     "/control/panic",
     response_model=Dict[str, Any],
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=http_status.HTTP_202_ACCEPTED,
 )
 async def control_panic(
     payload: PanicIn,

@@ -116,7 +116,7 @@ class CoquiSynthesizer:
         loop = asyncio.get_running_loop()
 
         def _run() -> None:
-            kwargs = {"file_path": destination}
+            kwargs: dict[str, object] = {"file_path": destination}
             if voice:
                 kwargs["speaker"] = voice
             self._tts.tts_to_file(text, **kwargs)

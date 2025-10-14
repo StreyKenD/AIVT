@@ -2,22 +2,29 @@ from __future__ import annotations
 
 import importlib
 import json
-from typing import Any, Iterable, List, Tuple
+from types import ModuleType, TracebackType
+from typing import Any, AsyncIterator, Callable, Iterable, List, Tuple, cast, Protocol
 
 import httpx
 import pytest
 
 pytest.importorskip("fastapi", reason="policy worker depende de FastAPI")
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-def _reload_policy_module() -> any:
+class PolicyWorkerModule(Protocol):
+    app: FastAPI
+    httpx: ModuleType
+
+
+def _reload_policy_module() -> PolicyWorkerModule:
     module = importlib.import_module("apps.policy_worker.main")
-    return importlib.reload(module)
+    return cast(PolicyWorkerModule, importlib.reload(module))
 
 
-def _consume_sse(response: Any) -> List[Tuple[str, dict]]:
-    events: List[Tuple[str, dict]] = []
+def _consume_sse(response: Any) -> List[Tuple[str, dict[str, Any]]]:
+    events: List[Tuple[str, dict[str, Any]]] = []
     current_event: str | None = None
     current_data: List[str] = []
     for raw_line in response.iter_lines():
@@ -50,7 +57,10 @@ class _FakeStream:
         return self
 
     async def __aexit__(
-        self, exc_type, exc, tb
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:  # pragma: no cover - no cleanup required
         return None
 
@@ -58,7 +68,7 @@ class _FakeStream:
         if self._error and isinstance(self._error, httpx.HTTPStatusError):
             raise self._error
 
-    async def aiter_lines(self) -> Iterable[str]:
+    async def aiter_lines(self) -> AsyncIterator[str]:
         for line in self._lines:
             yield line
 
@@ -74,7 +84,10 @@ class _FakeAsyncClient:
         return self
 
     async def __aexit__(
-        self, exc_type, exc, tb
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:  # pragma: no cover - no cleanup required
         return None
 
@@ -82,7 +95,9 @@ class _FakeAsyncClient:
         return _FakeStream(self._lines, self._error)
 
 
-def _fake_client_factory(lines: Iterable[str], error: Exception | None = None):
+def _fake_client_factory(
+    lines: Iterable[str], error: Exception | None = None
+) -> Callable[..., _FakeAsyncClient]:
     def _factory(**kwargs: object) -> _FakeAsyncClient:
         return _FakeAsyncClient(lines, error, **kwargs)
 
@@ -204,7 +219,7 @@ def test_policy_worker_injects_memory_and_recent_turns(
     monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
-    captured_payloads: List[dict] = []
+    captured_payloads: List[dict[str, Any]] = []
 
     class _RecorderClient:
         def __init__(self, **_: object) -> None:
@@ -217,7 +232,8 @@ def test_policy_worker_injects_memory_and_recent_turns(
             return None
 
         def stream(self, *_: object, **kwargs: object) -> _FakeStream:
-            captured_payloads.append(kwargs.get("json", {}))
+            payload = cast(dict[str, Any], kwargs.get("json", {}))
+            captured_payloads.append(payload)
             return _FakeStream(
                 [
                     json.dumps(

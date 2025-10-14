@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import asyncio
 
@@ -17,7 +17,13 @@ class FakeBridge:
     async def set_scene(self, scene: str) -> None:
         self.calls.append(("set_scene", (scene,), {}))
 
-    async def update_persona(self, *, style, chaos, energy) -> None:
+    async def update_persona(
+        self,
+        *,
+        style: Optional[str],
+        chaos: Optional[float],
+        energy: Optional[float],
+    ) -> None:
         self.calls.append(
             ("update_persona", (), {"style": style, "chaos": chaos, "energy": energy})
         )

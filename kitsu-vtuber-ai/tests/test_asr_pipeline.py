@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import AsyncIterator, List, Tuple
+import asyncio
+from dataclasses import dataclass
+from typing import AsyncIterator, List, Tuple, cast
 
 from apps.asr_worker.main import ASRConfig, SpeechPipeline, TranscriptionResult
 
@@ -33,9 +35,9 @@ class PatternVAD:
 
 @dataclass
 class Recorder:
-    events: List[Tuple[str, dict]]
+    events: List[Tuple[str, dict[str, object]]]
 
-    async def publish(self, event_type: str, payload: dict) -> None:
+    async def publish(self, event_type: str, payload: dict[str, object]) -> None:
         self.events.append((event_type, payload))
 
 
@@ -85,6 +87,7 @@ def test_pipeline_emits_partial_and_final_events() -> None:
         final_events = [payload for event, payload in recorded if event == "asr_final"]
         assert final_events, "Expected at least one final event"
         assert final_events[0]["text"] == "hello world"
-        assert final_events[0]["duration_ms"] > 0
+        duration = cast(float, final_events[0]["duration_ms"])
+        assert duration > 0
 
     asyncio.run(_scenario())

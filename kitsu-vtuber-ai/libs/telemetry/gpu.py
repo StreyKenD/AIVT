@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
-
-from . import TelemetryClient
+from typing import Any, Optional, Protocol
 
 logger = logging.getLogger("kitsu.telemetry.gpu")
+
+
+class TelemetryPublisher(Protocol):
+    async def publish(self, event_type: str, payload: dict[str, object]) -> None: ...
+
+    async def aclose(self) -> None: ...
 
 
 class GPUMonitor:
@@ -14,7 +18,7 @@ class GPUMonitor:
 
     def __init__(
         self,
-        telemetry: Optional[TelemetryClient],
+        telemetry: Optional[TelemetryPublisher],
         *,
         interval_seconds: float = 30.0,
         nvml: Any | None = None,
@@ -104,8 +108,8 @@ def _load_nvml() -> Any | None:
     return pynvml
 
 
-def _collect_metrics(nvml: Any) -> list[dict[str, float | int | str]]:
-    payloads: list[dict[str, float | int | str]] = []
+def _collect_metrics(nvml: Any) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
     try:
         count = nvml.nvmlDeviceGetCount()  # type: ignore[attr-defined]
     except Exception as exc:  # pragma: no cover - NVML inconsistente
@@ -130,20 +134,19 @@ def _collect_metrics(nvml: Any) -> list[dict[str, float | int | str]]:
         free_mb = round(mem.free / (1024 * 1024), 2)
         power_w = round(power / 1000.0, 2) if isinstance(power, (int, float)) else None
         fan_pct = float(fan_speed) if isinstance(fan_speed, (int, float)) else None
-        payloads.append(
-            {
-                "index": index,
-                "name": name,
-                "temperature_c": temp,
-                "utilization_pct": float(util.gpu),  # type: ignore[attr-defined]
-                "memory_used_mb": used_mb,
-                "memory_total_mb": total_mb,
-                "memory_free_mb": free_mb,
-                "memory_pct": round((used_mb / total_mb) * 100, 2) if total_mb else 0.0,
-                "fan_speed_pct": fan_pct,
-                "power_w": power_w,
-            }
-        )
+        payload: dict[str, object] = {
+            "index": index,
+            "name": name,
+            "temperature_c": temp,
+            "utilization_pct": float(util.gpu),  # type: ignore[attr-defined]
+            "memory_used_mb": used_mb,
+            "memory_total_mb": total_mb,
+            "memory_free_mb": free_mb,
+            "memory_pct": round((used_mb / total_mb) * 100, 2) if total_mb else 0.0,
+            "fan_speed_pct": fan_pct,
+            "power_w": power_w,
+        }
+        payloads.append(payload)
     return payloads
 
 
