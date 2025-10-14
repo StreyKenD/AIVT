@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, Optional, Protocol
+from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, cast
 
 from libs.common import configure_json_logging
 
@@ -51,7 +51,7 @@ class VTubeStudioClient:
         auth_token: Optional[str] = None,
         websocket_factory: Optional[WebSocketFactory] = None,
     ) -> None:
-        self._url = url or os.getenv("VTS_URL", "ws://127.0.0.1:8001")
+        self._url: str = url or os.getenv("VTS_URL", "ws://127.0.0.1:8001") or "ws://127.0.0.1:8001"
         self._auth_token = auth_token or os.getenv("VTS_AUTH_TOKEN")
         self._plugin_name = os.getenv("VTS_PLUGIN_NAME", "Kitsu.exe Controller")
         self._developer = os.getenv("VTS_DEVELOPER", "Kitsu.exe")
@@ -80,7 +80,8 @@ class VTubeStudioClient:
                 self._connected = True
                 return
             factory = self._factory or websockets.connect  # type: ignore[union-attr]
-            self._ws = await factory(self._url)
+            connection = await factory(self._url)
+            self._ws = cast(WebSocketLike, connection)
             await self._authenticate()
             self._connected = True
             logger.info("Connected to VTube Studio at %s", self._url)

@@ -9,7 +9,8 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator, Callable, Dict, List, Optional, Protocol
+from types import ModuleType
+from typing import Any, AsyncIterator, Callable, Dict, Iterable, Optional, Protocol, Sequence, cast
 
 import httpx
 
@@ -31,14 +32,96 @@ class Transcriber(Protocol):
         """Return the transcription for the given PCM16 audio payload."""
 
 
+class NumpyArray(Protocol):
+    def astype(self, dtype: object) -> "NumpyArray": ...
+
+    def __truediv__(self, other: float) -> "NumpyArray": ...
+
+
+class NumpyModule(Protocol):
+    int16: object
+    float32: object
+
+    def frombuffer(self, buffer: bytes, dtype: object) -> NumpyArray: ...
+
+
+class SegmentLike(Protocol):
+    text: str
+    avg_logprob: float | None
+
+
+class WhisperModelLike(Protocol):
+    def transcribe(
+        self,
+        audio: NumpyArray,
+        *,
+        beam_size: int,
+        language: str,
+        condition_on_previous_text: bool,
+        vad_filter: bool,
+        without_timestamps: bool,
+    ) -> tuple[Iterable[SegmentLike], object | None]:
+        ...
+
+
 class VoiceActivityDetector(Protocol):
     def is_speech(self, frame: bytes) -> bool:
         """Return True if the frame contains speech."""
 
 
 class AudioSource(Protocol):
-    async def frames(self) -> AsyncIterator[bytes]:
+    def frames(self) -> AsyncIterator[bytes]:
         """Yield PCM16 audio frames of a fixed duration."""
+
+
+class ManagedAudioSource(AudioSource, Protocol):
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+class SoundDeviceStream(Protocol):
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class SoundDeviceModule(Protocol):
+    def RawInputStream(self, *args: object, **kwargs: object) -> SoundDeviceStream: ...
+
+
+class PyAudioStream(Protocol):
+    def read(self, frames: int) -> bytes: ...
+
+    def stop_stream(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class PyAudioInterface(Protocol):
+    def open(self, *args: object, **kwargs: object) -> PyAudioStream: ...
+
+    def terminate(self) -> None: ...
+
+
+class PyAudioModule(Protocol):
+    paInt16: object
+
+    def PyAudio(self) -> PyAudioInterface: ...
+
+
+class WebRtcVadLike(Protocol):
+    def is_speech(self, frame: bytes, sample_rate: int) -> bool: ...
+
+
+class WebRtcVadModule(Protocol):
+    def Vad(self, aggressiveness: int) -> WebRtcVadLike: ...
+
+
+class OrchestratorPublisher(Protocol):
+    async def publish(self, event_type: str, payload: Dict[str, object]) -> None: ...
 
 
 class OrchestratorClient:
@@ -92,12 +175,12 @@ class ASRConfig:
         return max(1, int(math.ceil(minimum_ms / self.frame_duration_ms)))
 
 
-def load_module_if_available(name: str) -> Optional[object]:
+def load_module_if_available(name: str) -> ModuleType | None:
     spec = importlib.util.find_spec(name)
     if spec is None:
         return None
     module = importlib.import_module(name)
-    return module
+    return cast(ModuleType, module)
 
 
 def build_transcriber(config: ASRConfig) -> Transcriber:
@@ -108,9 +191,10 @@ def build_transcriber(config: ASRConfig) -> Transcriber:
         )
 
     WhisperModel = getattr(faster_whisper, "WhisperModel")
-    numpy_module = load_module_if_available("numpy")
-    if numpy_module is None:  # pragma: no cover - dependency guard
+    numpy_module_obj = load_module_if_available("numpy")
+    if numpy_module_obj is None:  # pragma: no cover - dependency guard
         raise RuntimeError("numpy is required alongside faster-whisper")
+    numpy_module = cast(NumpyModule, numpy_module_obj)
 
     compute_type = config.compute_type or (
         "int8_float16" if config.device_preference == "cuda" else "int8"
@@ -122,10 +206,13 @@ def build_transcriber(config: ASRConfig) -> Transcriber:
     last_error: Optional[Exception] = None
     for device in device_candidates:
         try:
-            model = WhisperModel(  # type: ignore[call-arg]
-                config.model_name,
-                device=device,
-                compute_type=compute_type if device != "cpu" else "int8",
+            model = cast(
+                WhisperModelLike,
+                WhisperModel(  # type: ignore[call-arg]
+                    config.model_name,
+                    device=device,
+                    compute_type=compute_type if device != "cpu" else "int8",
+                ),
             )
             if device == "cpu" and config.device_preference != "cpu":
                 logger.warning(
@@ -140,7 +227,9 @@ def build_transcriber(config: ASRConfig) -> Transcriber:
 
 
 class FasterWhisperTranscriber:
-    def __init__(self, model: object, sample_rate: int, numpy_module: object) -> None:
+    def __init__(
+        self, model: WhisperModelLike, sample_rate: int, numpy_module: NumpyModule
+    ) -> None:
         self._model = model
         self._sample_rate = sample_rate
         self._np = numpy_module
@@ -153,7 +242,7 @@ class FasterWhisperTranscriber:
             np_module.frombuffer(audio, dtype=np_module.int16).astype(np_module.float32)
             / 32768.0
         )
-        segments_iter, info = self._model.transcribe(  # type: ignore[attr-defined]
+        segments_iter, info = self._model.transcribe(
             audio_array,
             beam_size=1,
             language="en",
@@ -168,12 +257,12 @@ class FasterWhisperTranscriber:
         return TranscriptionResult(text=text, confidence=confidence, language=language)
 
 
-def _confidence_from_segments(segments: list[object]) -> Optional[float]:
+def _confidence_from_segments(segments: Sequence[SegmentLike]) -> Optional[float]:
     if not segments:
         return None
     scores = []
     for segment in segments:
-        value = getattr(segment, "avg_logprob", None)
+        value = segment.avg_logprob
         if value is None:
             continue
         scores.append(float(value))
@@ -189,11 +278,11 @@ def build_vad(config: ASRConfig) -> VoiceActivityDetector:
         return PassthroughVAD(config.frame_bytes)
     if config.vad_mode.lower() != "webrtc":
         raise RuntimeError(f"Unsupported VAD mode: {config.vad_mode}")
-    vad_module = load_module_if_available("webrtcvad")
-    if vad_module is None:
+    vad_module_obj = load_module_if_available("webrtcvad")
+    if vad_module_obj is None:
         raise RuntimeError("webrtcvad is not installed; set ASR_VAD=none to proceed")
-    VadCls = getattr(vad_module, "Vad")
-    vad = VadCls(config.vad_aggressiveness)
+    vad_module = cast(WebRtcVadModule, vad_module_obj)
+    vad = vad_module.Vad(config.vad_aggressiveness)
     return WebRtcVAD(vad, config.frame_bytes, config.sample_rate)
 
 
@@ -208,7 +297,7 @@ class PassthroughVAD:
 
 
 class WebRtcVAD:
-    def __init__(self, vad: object, frame_bytes: int, sample_rate: int) -> None:
+    def __init__(self, vad: WebRtcVadLike, frame_bytes: int, sample_rate: int) -> None:
         self._vad = vad
         self._frame_bytes = frame_bytes
         self._sample_rate = sample_rate
@@ -227,21 +316,29 @@ class FakeAudioSource:
         self._interval = interval
         self._running = True
 
-    async def frames(self) -> AsyncIterator[bytes]:
+    def frames(self) -> AsyncIterator[bytes]:
         blank = b"\x00" * self._frame_bytes
-        while self._running:
-            await asyncio.sleep(self._interval)
-            yield blank
+
+        async def _generator() -> AsyncIterator[bytes]:
+            while self._running:
+                await asyncio.sleep(self._interval)
+                yield blank
+
+        return _generator()
+
+    def stop(self) -> None:
+        self._running = False
 
 
 class SoundDeviceAudioSource:
     def __init__(self, config: ASRConfig) -> None:
         self._config = config
-        self._module = load_module_if_available("sounddevice")
-        if self._module is None:
+        module = load_module_if_available("sounddevice")
+        if module is None:
             raise RuntimeError("sounddevice is not installed")
+        self._module = cast(SoundDeviceModule, module)
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=32)
-        self._stream = None
+        self._stream: SoundDeviceStream | None = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def start(self) -> None:
@@ -283,21 +380,25 @@ class SoundDeviceAudioSource:
             except asyncio.QueueFull:
                 logger.debug("Dropped audio frame due to full queue")
 
-    async def frames(self) -> AsyncIterator[bytes]:
-        while True:
-            frame = await self._queue.get()
-            yield frame
+    def frames(self) -> AsyncIterator[bytes]:
+        async def _generator() -> AsyncIterator[bytes]:
+            while True:
+                frame = await self._queue.get()
+                yield frame
+
+        return _generator()
 
 
 class PyAudioSource:
     def __init__(self, config: ASRConfig) -> None:
         self._config = config
-        self._module = load_module_if_available("pyaudio")
-        if self._module is None:
+        module = load_module_if_available("pyaudio")
+        if module is None:
             raise RuntimeError("pyaudio is not installed")
+        self._module = cast(PyAudioModule, module)
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=32)
-        self._stream = None
-        self._pa = None
+        self._stream: PyAudioStream | None = None
+        self._pa: PyAudioInterface | None = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._worker: Optional[asyncio.Task[None]] = None
 
@@ -348,10 +449,13 @@ class PyAudioSource:
                 except asyncio.QueueFull:
                     logger.debug("Dropped PyAudio frame due to full queue")
 
-    async def frames(self) -> AsyncIterator[bytes]:
-        while True:
-            frame = await self._queue.get()
-            yield frame
+    def frames(self) -> AsyncIterator[bytes]:
+        async def _generator() -> AsyncIterator[bytes]:
+            while True:
+                frame = await self._queue.get()
+                yield frame
+
+        return _generator()
 
 
 class SpeechPipeline:
@@ -361,12 +465,12 @@ class SpeechPipeline:
         config: ASRConfig,
         vad: VoiceActivityDetector,
         transcriber: Transcriber,
-        orchestrator: OrchestratorClient,
+        orchestrator: OrchestratorPublisher,
     ) -> None:
         self._config = config
         self._vad = vad
         self._transcriber = transcriber
-        self._orchestrator = orchestrator
+        self._orchestrator: OrchestratorPublisher = orchestrator
         self._speech_active = False
         self._buffer = bytearray()
         self._silence_frames = 0
@@ -545,10 +649,10 @@ async def acquire_audio_source(config: ASRConfig) -> AsyncIterator[AudioSource]:
         try:
             yield source
         finally:
-            source._running = False
+            source.stop()
         return
 
-    factories: List[tuple[str, Callable[[ASRConfig], object]]] = [
+    factories: list[tuple[str, Callable[[ASRConfig], ManagedAudioSource]]] = [
         ("sounddevice", SoundDeviceAudioSource),
         ("pyaudio", PyAudioSource),
     ]
@@ -580,7 +684,7 @@ async def acquire_audio_source(config: ASRConfig) -> AsyncIterator[AudioSource]:
     try:
         yield fallback
     finally:
-        fallback._running = False
+        fallback.stop()
 
 
 if __name__ == "__main__":

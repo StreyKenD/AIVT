@@ -366,13 +366,15 @@ class SoakHarness:
         def _aggregate(values: Sequence[float]) -> Dict[str, Optional[float]]:
             if not values:
                 return {"avg": None, "p95": None, "max": None}
+            if len(values) > 1:
+                percentile = _percentile(values, 95.0)
+                assert percentile is not None
+                p95_value = round(percentile, 2)
+            else:
+                p95_value = round(values[0], 2)
             return {
                 "avg": round(statistics.fmean(values), 2),
-                "p95": (
-                    round(_percentile(values, 95.0), 2)
-                    if len(values) > 1
-                    else round(values[0], 2)
-                ),
+                "p95": p95_value,
                 "max": round(max(values), 2),
             }
 

@@ -8,7 +8,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict, Optional
+from typing import Awaitable, Callable, Dict, Optional, Protocol
 
 import httpx
 
@@ -31,6 +31,18 @@ CommandHandler = Callable[["ChatMessage"], Awaitable[None]]
 class ChatMessage:
     author: str
     content: str
+
+
+class TwitchBridge(Protocol):
+    async def toggle_tts(self, enabled: bool) -> None: ...
+
+    async def update_persona(
+        self, *, style: Optional[str], chaos: Optional[float], energy: Optional[float]
+    ) -> None: ...
+
+    async def set_scene(self, scene: str) -> None: ...
+
+    async def emit_chat(self, role: str, text: str) -> None: ...
 
 
 class RateLimiter:
@@ -97,9 +109,9 @@ class TwitchCommandRouter:
     )
 
     def __init__(
-        self, bridge: OrchestratorBridge, cooldown_seconds: float = 3.0
+        self, bridge: TwitchBridge, cooldown_seconds: float = 3.0
     ) -> None:
-        self._bridge = bridge
+        self._bridge: TwitchBridge = bridge
         self._handlers: Dict[str, CommandHandler] = {}
         self._rate_limiter = RateLimiter(cooldown_seconds)
         self._register_default_handlers()

@@ -325,7 +325,7 @@ async def _stream_ollama_response(
 
     latency_ms = (time.perf_counter() - start_time) * 1000
     stats = _extract_stats(final_metadata)
-    response = PolicyResponse(
+    policy_response = PolicyResponse(
         content=content,
         latency_ms=round(latency_ms, 2),
         source="ollama",
@@ -350,7 +350,7 @@ async def _stream_ollama_response(
             "stats": stats,
         },
     )
-    yield _format_sse("final", response.dict())
+    yield _format_sse("final", policy_response.dict())
 
 
 def build_mock_reply(payload: PolicyRequest) -> str:
