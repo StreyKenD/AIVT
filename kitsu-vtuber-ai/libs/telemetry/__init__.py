@@ -40,14 +40,14 @@ class TelemetryClient:
         client = await self._ensure_client()
         headers: Dict[str, str] = {}
         if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+            headers["X-API-Key"] = self._api_key
         data = {
             "type": event_type,
             "ts": time.time(),
             "payload": payload,
         }
         if self._service:
-            data["service"] = self._service
+            data["source"] = self._service
         try:
             response = await client.post("/events", json=data, headers=headers)
             response.raise_for_status()
