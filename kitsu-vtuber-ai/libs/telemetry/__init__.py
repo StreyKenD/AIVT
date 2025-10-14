@@ -52,7 +52,7 @@ class TelemetryClient:
             response = await client.post("/events", json=data, headers=headers)
             response.raise_for_status()
         except Exception as exc:  # pragma: no cover - network noise
-            logger.debug("Falha ao enviar telemetria %s: %s", event_type, exc)
+            logger.debug("Failed to send telemetry %s: %s", event_type, exc)
 
     async def aclose(self) -> None:
         if self._client is None:

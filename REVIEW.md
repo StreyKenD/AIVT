@@ -1,21 +1,21 @@
-# Código revisado
+# Code Review Notes
 
-## Problemas encontrados
+## Issues Found
 
-1. **Autenticação incorreta ao publicar telemetria a partir dos serviços do orquestrador**  
-   `TelemetryClient.publish` envia a chave como `Authorization: Bearer`, mas a API valida apenas `X-API-Key`. Em ambientes protegidos, todas as chamadas retornarão 401 e nenhum evento (incluindo métricas de GPU) será persistido.  
-   Referências: `TelemetryClient`【F:kitsu-vtuber-ai/libs/telemetry/__init__.py†L39-L55】 e validação da API【F:kitsu-telemetry/api/main.py†L71-L75】【F:kitsu-telemetry/README.md†L27-L35】.
+1. **Incorrect authentication when publishing telemetry from orchestrator services**  
+   `TelemetryClient.publish` sends the key using `Authorization: Bearer`, but the API only validates `X-API-Key`. In protected environments every call will return 401 and no event (including GPU metrics) will be persisted.  
+   References: `TelemetryClient`【F:kitsu-vtuber-ai/libs/telemetry/__init__.py†L39-L55】 and API validation【F:kitsu-telemetry/api/main.py†L71-L75】【F:kitsu-telemetry/README.md†L27-L35】.
 
-2. **Publicador do orquestrador ignora totalmente a `TELEMETRY_API_KEY`**  
-   O `TelemetryPublisher` usado pelo `EventBroker` nunca define cabeçalhos de autenticação ao chamar `/events`. Assim, basta ativar a chave na API para que todos os broadcasts do orquestrador falhem, mesmo que a variável exista no `.env`.  
-   Referências: implementação atual【F:kitsu-vtuber-ai/apps/orchestrator/main.py†L213-L236】 e documentação de ambiente que exige o token【F:kitsu-vtuber-ai/README.md†L100-L124】.
+2. **Orchestrator publisher ignores `TELEMETRY_API_KEY` entirely**  
+   The `TelemetryPublisher` used by the `EventBroker` never sets authentication headers when calling `/events`. Enabling the API key therefore causes every orchestrator broadcast to fail even if the variable exists in `.env`.  
+   References: current implementation【F:kitsu-vtuber-ai/apps/orchestrator/main.py†L213-L236】 and environment docs requiring the token【F:kitsu-vtuber-ai/README.md†L100-L124】.
 
-3. **Eventos perdem a identificação de origem**  
-   A API espera o campo opcional `source`, mas os clientes Python enviam `service`, que é descartado pelo Pydantic (não há configuração `extra="allow"`). Isso faz com que a coluna `source` receba sempre string vazia, dificultando filtros por componente nos dashboards.  
-   Referências: schema aceito pela API【F:kitsu-telemetry/api/main.py†L19-L31】 versus payload gerado pelos clientes【F:kitsu-vtuber-ai/libs/telemetry/__init__.py†L39-L55】【F:kitsu-vtuber-ai/apps/orchestrator/main.py†L229-L236】.
+3. **Events drop the source identifier**  
+   The API expects the optional `source` field, but the Python clients send `service`, which is discarded by Pydantic (`extra="allow"` is not configured). As a result the `source` column always receives an empty string, making it harder to filter dashboards by component.  
+   References: API schema【F:kitsu-telemetry/api/main.py†L19-L31】 versus generated payloads【F:kitsu-vtuber-ai/libs/telemetry/__init__.py†L39-L55】【F:kitsu-vtuber-ai/apps/orchestrator/main.py†L229-L236】.
 
-## Recomendações
+## Recommendations
 
-- Alinhar os cabeçalhos de autenticação (`X-API-Key`) tanto no `TelemetryClient` quanto no `TelemetryPublisher`, reaproveitando as variáveis já documentadas.
-- Propagar o identificador do serviço em `source` (ou permitir campos extras no modelo da API) para manter os dados diferenciados por componente.
-- Adicionar testes que cubram cenários com chave de API habilitada, garantindo que regressões na autenticação sejam detectadas.
+- Align the authentication headers (`X-API-Key`) for both `TelemetryClient` and `TelemetryPublisher`, reusing the already documented variables.
+- Populate the service identifier under `source` (or allow extra fields in the API model) to keep telemetry data segmented by component.
+- Add tests covering scenarios with the API key enabled to ensure authentication regressions are caught early.

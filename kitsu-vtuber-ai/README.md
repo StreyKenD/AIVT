@@ -1,49 +1,49 @@
 # Kitsu.exe Core (kitsu-vtuber-ai)
 
-Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caótica que conversa, reage e controla seu avatar ao vivo. O pipeline principal segue **ASR → LLM → TTS**, com integrações para Twitch, OBS e VTube Studio. Consulte também o [RUN_FIRST.md](RUN_FIRST.md) para o checklist inicial de configuração local e avisos de licenciamento obrigatórios.
+Kitsu.exe is the backbone of the "Kitsu" VTuber AI – a kawaii, chaotic fox that chats, reacts, and drives her avatar live on stream. The main pipeline follows **ASR → LLM → TTS**, with integrations for Twitch, OBS, and VTube Studio. See [RUN_FIRST.md](RUN_FIRST.md) for the initial local setup checklist and mandatory licensing notes.
 
 ```
-[Twitch Chat / Voz]
+[Twitch Chat / Voice]
         |
         v
-  [ASR Worker] --texto--> [Policy Worker (LLM)] --fala/mood--> [TTS Worker]
+  [ASR Worker] --text--> [Policy Worker (LLM)] --speech/mood--> [TTS Worker]
         |                                             |
         |                                             v
         +--> [Orchestrator] <--> [OBS Controller] <--> [Avatar Controller]
                               \--> [Control Panel Backend]
 ```
 
-## Visão
-- Persona inicial: **kawaii & chaotic**, idioma inglês.
-- Arquitetura distribuída com workers assíncronos.
-- Memória curta e persistente com sumários salvos em SQLite.
-- Telemetria e painel de controle externo (ver repositório `kitsu-telemetry`).
+## Vision
+- Initial persona: **kawaii & chaotic**, English-speaking.
+- Distributed architecture with asynchronous workers.
+- Short-term and persistent memory with SQLite summaries.
+- External telemetry and control panel (see the `kitsu-telemetry` repository).
 
-## Dependências de runtime
-- Python 3.11+ com [Poetry](https://python-poetry.org/) para gerenciar o ambiente virtual.
-- `obsws-python 1.7.2`, alinhado ao protocolo **OBS WebSocket v5** (habilite o plugin nativo do OBS 28+).
-- Binários externos para áudio/vídeo: `ffmpeg`, `portaudio`, `libsndfile` e drivers das interfaces em uso.
-- Opcional, porém recomendado para desenvolvimento: OBS Studio e VTube Studio atualizados para testar integrações.
+## Runtime dependencies
+- Python 3.11+ with [Poetry](https://python-poetry.org/) for managing the virtual environment.
+- `obsws-python 1.7.2`, aligned with the **OBS WebSocket v5** protocol (enable the native plugin in OBS 28+).
+- External audio/video binaries: `ffmpeg`, `portaudio`, `libsndfile`, and the drivers for your interfaces.
+- Optional but recommended for development: OBS Studio and VTube Studio to validate integrations.
 
-### Captura de microfone no Windows
-- Liste os dispositivos suportados pelos backends `sounddevice` e `PyAudio` com um único comando:
+### Microphone capture on Windows
+- List the supported devices for the `sounddevice` and `PyAudio` backends in a single command:
   ```powershell
   poetry run python -m kitsu_vtuber_ai.apps.asr_worker.devices
   ```
-- Utilize `--json` para integrar com scripts ou salvar a lista completa: `poetry run python -m kitsu_vtuber_ai.apps.asr_worker.devices --json > devices.json`.
-- Defina `ASR_INPUT_DEVICE` com o nome retornado pelo `sounddevice` (string exata) ou com o índice numérico indicado para `PyAudio`. Caso nenhum backend esteja disponível, ajuste `ASR_FAKE_AUDIO=1` para manter o worker em modo silencioso durante testes.
-- Atualize `ASR_SAMPLE_RATE`, `ASR_FRAME_MS` e `ASR_SILENCE_MS` se precisar alinhar o tempo de frame às placas de captura ou interfaces de áudio específicas.
+- Use `--json` to integrate with scripts or store the full list: `poetry run python -m kitsu_vtuber_ai.apps.asr_worker.devices --json > devices.json`.
+- Set `ASR_INPUT_DEVICE` with the name returned by `sounddevice` (exact string) or the numeric index reported for `PyAudio`. If no backend is available, set `ASR_FAKE_AUDIO=1` to keep the worker silent during tests.
+- Adjust `ASR_SAMPLE_RATE`, `ASR_FRAME_MS`, and `ASR_SILENCE_MS` if you need to sync the frame timing with capture cards or specific audio interfaces.
 
-### Instalando `ffmpeg`, `libsndfile` e `portaudio` no Windows
+### Installing `ffmpeg`, `libsndfile`, and `portaudio` on Windows
 - Via [Chocolatey](https://chocolatey.org/install):
   ```powershell
   choco install ffmpeg portaudio libsndfile
   ```
-- Sem gerenciador de pacotes:
-  1. Baixe o pacote "release full" do FFmpeg em <https://www.gyan.dev/ffmpeg/builds/> e extraia em `C:\ffmpeg` (adicione `C:\\ffmpeg\\bin` ao `PATH`).
-  2. Instale o `libsndfile` via `.exe` oficial em <https://github.com/libsndfile/libsndfile/releases> garantindo que a pasta `bin/` esteja no `PATH`.
-  3. Copie o `portaudio_x64.dll` do pacote pré-compilado disponível em <http://files.portaudio.com/download.html> para uma pasta presente no `PATH` (ex.: `C:\AudioSDK`).
-- Valide a instalação no PowerShell (ajuste o caminho conforme a pasta escolhida para as DLLs):
+- Without a package manager:
+  1. Download the "release full" build of FFmpeg from <https://www.gyan.dev/ffmpeg/builds/> and extract it to `C:\ffmpeg` (add `C:\\ffmpeg\\bin` to `PATH`).
+  2. Install `libsndfile` using the official `.exe` at <https://github.com/libsndfile/libsndfile/releases> and make sure the `bin/` folder is on `PATH`.
+  3. Copy `portaudio_x64.dll` from the precompiled package at <http://files.portaudio.com/download.html> to a folder on `PATH` (e.g., `C:\AudioSDK`).
+- Validate the installation in PowerShell (adjust the paths to match your DLL locations):
   ```powershell
   ffmpeg -version
   Get-Command ffmpeg
@@ -51,149 +51,147 @@ Kitsu.exe é a espinha dorsal da VTuber IA "Kitsu" – uma raposa kawaii e caót
   Get-ChildItem "C:\\AudioSDK" -Filter "*portaudio*.dll"
   ```
 
-## Rodando localmente
-1. Instale [Poetry](https://python-poetry.org/) e Python 3.11+.
-2. Copie `.env.example` para `.env` e preencha as credenciais.
-3. Instale as dependências:
+## Running locally
+1. Install [Poetry](https://python-poetry.org/) and Python 3.11+.
+2. Copy `.env.example` to `.env` and fill in the credentials.
+3. Install dependencies:
    ```bash
    poetry install
    ```
-4. Levante o backend de controle (FastAPI):
+4. Start the control panel backend (FastAPI):
    ```bash
    poetry run uvicorn apps.control_panel_backend.main:app --reload
    ```
-5. Para inspecionar o orquestrador (FastAPI + WebSocket):
+5. Inspect the orchestrator (FastAPI + WebSocket):
    ```bash
    poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
    curl http://${ORCH_HOST:-127.0.0.1}:${ORCH_PORT:-8000}/status
    ```
 
-> **Atribuição**: O modelo LLM padrão é **Llama 3 8B Instruct** servido pelo Ollama.
+> **Attribution**: The default LLM is **Llama 3 8B Instruct** served by Ollama.
 
-### Como rodar sem Docker (Windows)
+### How to run without Docker (Windows)
 
-1. Instale o [Python 3.11](https://www.python.org/downloads/windows/) (habilite "Add python.exe to PATH") e o [Poetry](https://python-poetry.org/docs/).
-2. Clone o repositório, abra **PowerShell 7+ (pwsh)** e configure o ambiente virtual:
+1. Install [Python 3.11](https://www.python.org/downloads/windows/) (enable "Add python.exe to PATH") and [Poetry](https://python-poetry.org/docs/).
+2. Clone the repository, open **PowerShell 7+ (pwsh)**, and configure the virtual environment:
    ```powershell
    poetry env use 3.11
    poetry install
    ```
-3. Copie o arquivo de variáveis: `Copy-Item .env.example .env` e edite as credenciais (Twitch OAuth, OBS, VTS etc.).
-4. Opcional porém recomendado: instale os hooks locais com `poetry run pre-commit install` para ativar `ruff`, `black`, `isort` e `mypy` antes dos commits.
-5. Use os scripts de automação em `scripts/` para iniciar ou encerrar cada serviço individualmente:
+3. Copy the environment file: `Copy-Item .env.example .env` and edit the credentials (Twitch OAuth, OBS, VTS, etc.).
+4. Optional but recommended: install local hooks with `poetry run pre-commit install` to enable `ruff`, `black`, `isort`, and `mypy` before commits.
+5. Use the automation scripts under `scripts/` to start or stop each service individually:
    ```powershell
-   pwsh scripts/run_orchestrator.ps1 -Action start   # inicia o orquestrador (FastAPI)
-   pwsh scripts/run_asr.ps1 -Action status           # verifica o worker de ASR
-   pwsh scripts/run_tts.ps1 -Action stop             # encerra o worker de TTS
+   pwsh scripts/run_orchestrator.ps1 -Action start   # start the orchestrator (FastAPI)
+   pwsh scripts/run_asr.ps1 -Action status           # check the ASR worker
+   pwsh scripts/run_tts.ps1 -Action stop             # stop the TTS worker
    ```
-6. Para subir tudo de uma vez (sem Docker), execute:
+6. To start everything at once (no Docker):
    ```powershell
    pwsh scripts/run_all_no_docker.ps1 -Action start
    ```
-   Utilize `-Action stop` para derrubar todos os serviços ou `-Action status` para conferir os PIDs ativos.
+   Use `-Action stop` to shut everything down or `-Action status` to inspect active PIDs.
 
-## Variáveis de ambiente essenciais
-As variáveis abaixo controlam como o orquestrador expõe seus endpoints HTTP/WebSocket e como os eventos são encaminhados para o módulo de telemetria:
+## Essential environment variables
+These variables control how the orchestrator exposes HTTP/WebSocket endpoints and where events are forwarded for telemetry:
 
-- `ORCH_HOST`: interface de bind utilizada pelo `uvicorn` (padrão `127.0.0.1`). Use `0.0.0.0` ao expor a API para outras máquinas ou para a UI hospedada fora do host local.
-- `ORCH_PORT`: porta pública do orquestrador. Alinhe esse valor com `PUBLIC_ORCH_BASE_URL` e `PUBLIC_ORCH_WS_URL` no repositório `kitsu-telemetry`; o valor recomendado para desenvolvimento é `8000`.
-- `TELEMETRY_API_URL`: URL base (ex.: `http://localhost:8001/api`) para onde os eventos de estado são publicados. Quando vazia, o orquestrador funciona sem telemetria externa.
-- `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: tokens opcionais para proteger os endpoints `/events` (telemetria) e `/persona`/`/toggle` quando acessados por integrações externas.
-- `ORCHESTRATOR_URL`: endereço HTTP utilizado pelos workers e integrações (Twitch, OBS, VTS) para publicar eventos no orquestrador.
-- `TTS_OUTPUT_DIR`: pasta onde os áudios sintetizados são cacheados (padrão `artifacts/tts`).
-- `TTS_MODEL_NAME` / `PIPER_MODEL`: identificadores dos modelos Coqui/Piper carregados pelos workers (ver [TTS Worker](#tts-worker)).
-- `TWITCH_CHANNEL` / `TWITCH_OAUTH_TOKEN`: credenciais do bot `twitchio` responsável por ler comandos em tempo real. Defina `TWITCH_BOT_NICK` e `TWITCH_DEFAULT_SCENE` se desejar personalizar o nickname ou a cena fallback.
-- `OBS_WS_URL` / `OBS_WS_PASSWORD`: endpoint do **obs-websocket v5** e senha configurada em OBS. `OBS_SCENES` aceita uma lista separada por vírgula utilizada pelo script demo; `OBS_PANIC_FILTER` indica o filtro ativado pelo macro de pânico.
-- `VTS_URL` / `VTS_AUTH_TOKEN`: endereço do servidor WebSocket do VTube Studio e token persistido após a primeira autorização do plugin. Ajuste `VTS_PLUGIN_NAME`/`VTS_DEVELOPER` para identificar o plugin nas configurações do VTS.
-- `KITSU_LOG_ROOT`: diretório onde cada serviço grava arquivos `.log` em JSON rotacionados diariamente (padrão `logs`).
-- `GPU_METRICS_INTERVAL_SECONDS`: frequência, em segundos, do coletor NVML que publica eventos `hardware.gpu` na telemetria.
+- `ORCH_HOST`: bind interface used by `uvicorn` (default `127.0.0.1`). Use `0.0.0.0` when exposing the API to other machines or to a UI hosted outside the local host.
+- `ORCH_PORT`: public port for the orchestrator. Align this value with `PUBLIC_ORCH_BASE_URL` and `PUBLIC_ORCH_WS_URL` in the `kitsu-telemetry` repository; `8000` is the recommended development value.
+- `TELEMETRY_API_URL`: base URL (e.g., `http://localhost:8001/api`) where state events are published. When empty, the orchestrator runs without external telemetry.
+- `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: optional tokens to protect the `/events` endpoint (telemetry) and `/persona`/`/toggle` when accessed by external integrations.
+- `ORCHESTRATOR_URL`: HTTP address used by workers and integrations (Twitch, OBS, VTS) to publish events to the orchestrator.
+- `TTS_OUTPUT_DIR`: folder where synthesized audio is cached (default `artifacts/tts`).
+- `TTS_MODEL_NAME` / `PIPER_MODEL`: identifiers for the Coqui/Piper models loaded by the workers (see [TTS Worker](#tts-worker)).
+- `TWITCH_CHANNEL` / `TWITCH_OAUTH_TOKEN`: credentials for the `twitchio` bot responsible for reading commands in real time. Set `TWITCH_BOT_NICK` and `TWITCH_DEFAULT_SCENE` if you want to customize the nickname or the fallback scene.
+- `OBS_WS_URL` / `OBS_WS_PASSWORD`: **obs-websocket v5** endpoint and password configured in OBS. `OBS_SCENES` accepts a comma-separated list used by the demo script; `OBS_PANIC_FILTER` indicates the filter triggered by the panic macro.
+- `VTS_URL` / `VTS_AUTH_TOKEN`: WebSocket endpoint and persistent token for VTube Studio. Adjust `VTS_PLUGIN_NAME`/`VTS_DEVELOPER` to identify the plugin inside VTS settings.
+- `KITSU_LOG_ROOT`: directory where each service writes daily-rotated JSON `.log` files (default `logs`).
+- `GPU_METRICS_INTERVAL_SECONDS`: frequency, in seconds, for the NVML collector that publishes `hardware.gpu` events to telemetry.
 
-### CORS do orquestrador
-O `apps.orchestrator.main` aplica `CORSMiddleware` automaticamente. Defina `ORCH_CORS_ALLOW_ORIGINS` com uma lista separada por vírgula contendo as origens autorizadas (por exemplo `http://localhost:5173,http://127.0.0.1:5173`). Por padrão o middleware habilita `GET`, `POST`, `OPTIONS` e upgrades de WebSocket; use `ORCH_CORS_ALLOW_ALL=1` apenas em ambientes de desenvolvimento controlados.
+### Orchestrator CORS
+`apps.orchestrator.main` enables `CORSMiddleware` automatically. Set `ORCH_CORS_ALLOW_ORIGINS` with a comma-separated list of allowed origins (for example, `http://localhost:5173,http://127.0.0.1:5173`). By default, the middleware allows `GET`, `POST`, `OPTIONS`, and WebSocket upgrades; use `ORCH_CORS_ALLOW_ALL=1` only in controlled development environments.
 
-## Estrutura
-- `apps/`: serviços principais (ASR, política, TTS, orquestração, integrações OBS/VTS/Twitch, backend de controle).
-- `libs/`: utilitários compartilhados e memória.
-- `configs/`: perfis e regras de segurança/moderação.
-- `scripts/`: utilitários para desenvolvimento.
-- `tests/`: testes de fumaça via `pytest`.
+## Structure
+- `apps/`: main services (ASR, policy, TTS, orchestration, OBS/VTS/Twitch integrations, control panel backend).
+- `libs/`: shared utilities and memory.
+- `configs/`: safety profiles and moderation rules.
+- `scripts/`: development utilities.
+- `tests/`: smoke tests powered by `pytest`.
 
-## Qualidade
+## Quality
 - Lockfile: `poetry lock --check`
 - Lint: `poetry run ruff .`
-- Formatação: `poetry run black --check .`
-- Tipagem: `poetry run mypy`
-- Testes: `poetry run pytest -q` (ou `python -m pytest -q` após `python -m pip install pytest pytest-asyncio`)
-- Pré-commit: `poetry run pre-commit run --all-files`
+- Formatting: `poetry run black --check .`
+- Typing: `poetry run mypy`
+- Tests: `poetry run pytest -q` (or `python -m pytest -q` after `python -m pip install pytest pytest-asyncio`)
+- Pre-commit: `poetry run pre-commit run --all-files`
 
-> Instale os hooks localmente com `poetry run pre-commit install` (o arquivo [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) já está configurado para `apps/`, `libs/` e `tests/`).
+> Install the hooks locally with `poetry run pre-commit install` (the [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) file already targets `apps/`, `libs/`, and `tests/`).
 
 ## QA & soak harness
-- Ajuste `SOAK_POLICY_URL`/`SOAK_TELEMETRY_URL` no `.env` conforme o ambiente.
-- Inicie todos os serviços (`pwsh scripts/run_all_no_docker.ps1 -Action start`).
-- Execute `poetry run python -m kitsu_vtuber_ai.apps.soak_harness.main --duration-minutes 120 --output artifacts/soak/summary.json` (use `--max-turns` em execuções rápidas).
-- O resumo agrega latências média/p95 por estágio e publica um evento `soak.result` consumido pelo painel (`Resultados do soak test`).
+- Set `SOAK_POLICY_URL`/`SOAK_TELEMETRY_URL` in `.env` to match the environment.
+- Start all services (`pwsh scripts/run_all_no_docker.ps1 -Action start`).
+- Run `poetry run python -m kitsu_vtuber_ai.apps.soak_harness.main --duration-minutes 120 --output artifacts/soak/summary.json` (use `--max-turns` for quick executions).
+- The summary aggregates per-stage average/p95 latencies and publishes a `soak.result` event consumed by the dashboard (**Soak test results**).
 
-### Logs estruturados e métricas de hardware
-- Todos os serviços (`apps/`) utilizam `libs.common.configure_json_logging` para emitir logs estruturados tanto no `stderr` quanto no diretório configurado por `KITSU_LOG_ROOT`. Cada linha é um JSON com `ts`, `service`, `logger`, `level`, `message` e extras opcionais.
-- O orquestrador inicializa um `GPUMonitor` baseado em `pynvml` que publica periodicamente eventos `hardware.gpu` (temperatura, utilização, fan, memória e consumo) para a API de telemetria. Ajuste `GPU_METRICS_INTERVAL_SECONDS` para controlar a frequência ou remova `pynvml` do ambiente para desativar a coleta.
+### Structured logs and hardware metrics
+- Every service (`apps/`) uses `libs.common.configure_json_logging` to emit structured logs both to `stderr` and to the directory configured by `KITSU_LOG_ROOT`. Each line is a JSON payload with `ts`, `service`, `logger`, `level`, `message`, and optional extras.
+- The orchestrator starts an NVML-based `GPUMonitor` that periodically publishes `hardware.gpu` events (temperature, utilization, fan, memory, and power) to the telemetry API. Adjust `GPU_METRICS_INTERVAL_SECONDS` to control the frequency or remove `pynvml` from the environment to disable collection.
 
+## Licenses and required credits
+- **Llama 3 8B Instruct (Meta)** via Ollama – review `licenses/third_party/llama3_license.pdf` before any public distribution or recorded demo.
+- **Coqui-TTS (selected model)** – requirements detailed in `licenses/third_party/coqui_tts_model_card.pdf`, including commercial usage limits.
+- **Live2D Avatar “Lumi”** – explicit attribution per `licenses/third_party/live2d_lumi_license.pdf` in streams, videos, and promotional materials.
 
-## Licenças e créditos obrigatórios
-- **Llama 3 8B Instruct (Meta)** via Ollama – leia e acompanhe `licenses/third_party/llama3_license.pdf` antes de qualquer distribuição pública ou demo gravada.
-- **Coqui-TTS (modelo selecionado)** – requisitos detalhados em `licenses/third_party/coqui_tts_model_card.pdf`, incluindo limitações de uso comercial.
-- **Avatar Live2D “Lumi”** – atribuição explícita conforme `licenses/third_party/live2d_lumi_license.pdf` em transmissões, vídeos e materiais promocionais.
+Keep these references available whenever you share builds or recordings.
 
-Mantenha essas referências sempre disponíveis ao compartilhar builds ou gravações do projeto.
+## Operations and release
+### Pilot checklist
+- Before: run the latest soak, validate audio/video (OBS + VTS), review tokens and presets, prepare the panic macro.
+- During: keep the dashboard open, log incidents in `#kitsu-ops`, inspect `/status` every 30 minutes.
+- After show: export telemetry CSV, run a short soak (`--max-turns 5`), archive incidents/clips.
 
+### Rollback and incidents
+1. Hit the panic button (mute + BRB scene).
+2. Restart specific services with `scripts/service_manager.ps1`.
+3. If needed, stop everything with `scripts/run_all_no_docker.ps1 -Action stop`.
+4. Document the incident in `docs/incidents/` and attach metrics/CSV.
 
-## Operações e release
-### Checklist do piloto
-- Antes: rodar o soak recente, validar áudio/vídeo (OBS + VTS), conferir tokens e presets, preparar macro de pânico.
-- Durante: manter o painel aberto, registrar incidentes em `#kitsu-ops`, inspecionar `/status` a cada 30 minutos.
-- Pós-show: exportar CSV da telemetria, rodar soak curto (`--max-turns 5`), arquivar incidentes/clipes.
+### Packaging the release
+- Generate the Windows-first bundle via `pwsh scripts/package_release.ps1 -OutputPath artifacts/release -Zip`.
+- The script copies `README.md`, `RUN_FIRST.md`, `.env.example`, PowerShell scripts, and `licenses/third_party/`.
+- Share the ZIP only after completing the pilot and QA checklist.
 
-### Rollback e incidentes
-1. Disparar o botão de pânico (mute + cena BRB).
-2. Reiniciar serviços específicos com `scripts/service_manager.ps1`.
-3. Se necessário, interromper tudo com `scripts/run_all_no_docker.ps1 -Action stop`.
-4. Documentar o ocorrido em `docs/incidents/` e anexar métricas/CSV.
+## Orchestrator APIs
+- `GET /status`: complete snapshot of persona, modules, current scene, and latest TTS request.
+- `POST /toggle/{module}`: enable/disable modules (`asr_worker`, `policy_worker`, `tts_worker`, `avatar_controller`, `obs_controller`, `twitch_ingest`).
+- `POST /persona`: adjust style (`kawaii`, `chaotic`, `calm`), chaos/energy levels, and family mode.
+- `POST /tts`: register a speech request (text + preferred voice).
+- `POST /obs/scene`: change the active OBS scene (with automatic reconnection and panic macro).
+- `POST /vts/expr`: apply an expression on the avatar via VTube Studio (authenticated WebSocket).
+- `POST /ingest/chat`: record chat/assistant messages to feed memory.
+- `POST /events/asr`: receive `asr_partial`/`asr_final` events from the ASR worker and broadcast them over WebSocket.
+- `WS /stream`: real-time broadcast of the events above and simulated metrics.
 
-### Empacotamento da release
-- Gerar o bundle Windows-first via `pwsh scripts/package_release.ps1 -OutputPath artifacts/release -Zip`.
-- O script copia `README.md`, `RUN_FIRST.md`, `.env.example`, scripts PowerShell e `licenses/third_party/`.
-- Compartilhar o ZIP somente após concluir o checklist de piloto e QA.
+## Memory
+- Short conversation buffer (ring buffer) with synthetic summaries every 6 messages.
+- Summaries persisted in SQLite (`data/memory.sqlite3`) with automatic restoration (`RESTORE_CONTEXT=true`, default window 2h).
+- Exposed on `/status` under `memory.current_summary` and `restore_context`.
 
-## APIs do Orquestrador
-- `GET /status`: snapshot completo da persona, módulos, cena atual e último pedido de TTS.
-- `POST /toggle/{module}`: habilita/desabilita módulos (`asr_worker`, `policy_worker`, `tts_worker`, `avatar_controller`, `obs_controller`, `twitch_ingest`).
-- `POST /persona`: ajusta estilo (`kawaii`, `chaotic`, `calm`), nível de caos/energia e modo familiar.
-- `POST /tts`: registra um pedido de fala (texto + voz preferida).
-- `POST /obs/scene`: altera a cena atual do OBS (com reconexão automática e macro de pânico).
-- `POST /vts/expr`: aplica expressão no avatar via VTube Studio (WebSocket autenticado).
-- `POST /ingest/chat`: registra mensagens do chat/assistente para alimentar a memória.
-- `POST /events/asr`: recebe eventos `asr_partial`/`asr_final` do worker de ASR e difunde pelo WebSocket.
-- `WS /stream`: difusão em tempo real dos eventos acima e das métricas simuladas.
-
-## Memória
-- Buffer curto de conversas (ring buffer) com sumarização sintética a cada 6 mensagens.
-- Sumários persistidos em SQLite (`data/memory.sqlite3`) com restauração automática (`RESTORE_CONTEXT=true`, janela padrão 2h).
-- Exposto no `/status` sob `memory.current_summary` e `restore_context`.
-
-## Política / LLM
-- `apps/policy_worker` consulta o Ollama (`OLLAMA_URL`) usando por padrão o modelo **Mixtral** (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`). Execute `ollama pull mixtral:8x7b-instruct-q4_K_M` antes do primeiro boot.
-- O endpoint `POST /respond` retorna um fluxo SSE (`text/event-stream`) com eventos `start`, `token`, `retry` e `final`. Cada `token` representa o streaming incremental dos trechos XML; o evento `final` inclui métricas (`latency_ms`, `stats`) e metadados da persona.
-- O prompt combina instruções de sistema + few-shots para reforçar o estilo kawaii/caótico, energia/nível de caos (`chaos_level`, `energy`) e modo familiar (`POLICY_FAMILY_FRIENDLY`).
-- A filtragem familiar é reforçada por um pipeline de moderação síncrono (`configs/safety/` + `libs.safety.ModerationPipeline`). Prompts proibidos retornam uma mensagem segura imediatamente; respostas finais passam por varredura adicional e, se necessário, são sanitizadas antes de chegar ao TTS.
-- O worker tenta reconectar/repetir (`POLICY_RETRY_ATTEMPTS`, `POLICY_RETRY_BACKOFF`) e, em caso de falha ou resposta inválida, volta ao mock amistoso (`POLICY_FORCE_MOCK=1` ou fallback automático), preservando o formato `<speech/><mood/><actions/>`.
+## Policy / LLM
+- `apps/policy_worker` queries Ollama (`OLLAMA_URL`) using **Mixtral** by default (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`). Run `ollama pull mixtral:8x7b-instruct-q4_K_M` before the first boot.
+- The `POST /respond` endpoint returns an SSE stream (`text/event-stream`) with `start`, `token`, `retry`, and `final` events. Each `token` represents the incremental XML stream; the `final` event includes metrics (`latency_ms`, `stats`) and persona metadata.
+- The prompt combines system instructions and few-shots to reinforce the kawaii/chaotic style, energy/chaos levels (`chaos_level`, `energy`), and family mode (`POLICY_FAMILY_FRIENDLY`).
+- Family-friendly filtering is enforced by a synchronous moderation pipeline (`configs/safety/` + `libs.safety.ModerationPipeline`). Forbidden prompts return a safe message immediately; final responses go through an additional scan and, if necessary, are sanitized before reaching TTS.
+- The worker retries (`POLICY_RETRY_ATTEMPTS`, `POLICY_RETRY_BACKOFF`) and falls back to the friendly mock (`POLICY_FORCE_MOCK=1` or automatic fallback) when the response fails or is invalid, preserving the `<speech/><mood/><actions/>` format.
 
 ## TTS Worker
-- O serviço (`apps/tts_worker`) prioriza o Coqui-TTS (`TTS_MODEL_NAME`) e recorre ao Piper (`PIPER_MODEL`, `PIPER_PATH`) quando o primeiro não está disponível. Caso nenhum backend seja carregado, um sintetizador determinístico gera silêncio para testes.
-- Saídas são cacheadas em disco (`artifacts/tts`) com metadados JSON (voz, latência, visemas). Chamadas repetidas reutilizam o arquivo local.
-- Use `TTS_DISABLE_COQUI=1` ou `TTS_DISABLE_PIPER=1` para forçar um backend específico durante depuração.
-- O método `cancel_active()` interrompe jobs em andamento antes do próximo trecho sintetizado, útil para cenários de "barge-in".
+- The service (`apps/tts_worker`) prioritizes Coqui-TTS (`TTS_MODEL_NAME`) and falls back to Piper (`PIPER_MODEL`, `PIPER_PATH`) when the former is unavailable. If neither backend loads, a deterministic synthesizer generates silence for tests.
+- Outputs are cached on disk (`artifacts/tts`) with JSON metadata (voice, latency, visemes). Repeated calls reuse the local file.
+- Use `TTS_DISABLE_COQUI=1` or `TTS_DISABLE_PIPER=1` to force a specific backend while debugging.
+- The `cancel_active()` method stops in-progress jobs before the next synthesized chunk, useful for barge-in scenarios.
 
-## Próximos Passos
-- Conectar com o painel de telemetria (repo `kitsu-telemetry`).
-- Expandir integrações ao vivo (OBS, VTube Studio, Twitch) com reconexão resiliente. ✅ Bot da Twitch controla módulos/cenas, controlador OBS reconecta com backoff e cliente VTS autentica via WebSocket.
-- Ajustar o pipeline Coqui/Piper para vozes definitivas e latências < 1.2 s.
+## Next steps
+- Connect with the telemetry dashboard (`kitsu-telemetry` repo).
+- Expand live integrations (OBS, VTube Studio, Twitch) with resilient reconnection. ✅ The Twitch bot controls modules/scenes, the OBS controller reconnects with backoff, and the VTS client authenticates via WebSocket.
+- Tune the Coqui/Piper pipeline for final voices and < 1.2 s latency.

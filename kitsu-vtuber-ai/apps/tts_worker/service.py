@@ -107,7 +107,7 @@ class CoquiSynthesizer:
         try:
             from TTS.api import TTS as CoquiTTS  # type: ignore
         except Exception as exc:  # pragma: no cover - dependency guard
-            raise RuntimeError("Coqui TTS não está instalado") from exc
+            raise RuntimeError("Coqui TTS is not installed") from exc
         return type("Module", (), {"TTS": CoquiTTS})
 
     async def synthesize(
@@ -131,9 +131,9 @@ class PiperSynthesizer:
         self._model = Path(os.getenv("PIPER_MODEL", ""))
         self._config = Path(os.getenv("PIPER_CONFIG", ""))
         if not self._model:
-            raise RuntimeError("PIPER_MODEL não configurado")
+            raise RuntimeError("PIPER_MODEL is not configured")
         if not self._binary:
-            raise RuntimeError("PIPER_PATH não configurado")
+            raise RuntimeError("PIPER_PATH is not configured")
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
@@ -169,7 +169,7 @@ class PiperSynthesizer:
 
 
 class SilentSynthesizer:
-    """Fallback determinístico usado em ambientes de teste."""
+    """Deterministic fallback used in test environments."""
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
@@ -192,12 +192,12 @@ def _default_synthesizers() -> List[Synthesizer]:
         try:
             synthesizers.append(CoquiSynthesizer())
         except Exception as exc:
-            logger.warning("Coqui indisponível: %s", exc)
+            logger.warning("Coqui unavailable: %s", exc)
     if os.getenv("TTS_DISABLE_PIPER") != "1":
         try:
             synthesizers.append(PiperSynthesizer())
         except Exception as exc:
-            logger.warning("Piper indisponível: %s", exc)
+            logger.warning("Piper unavailable: %s", exc)
     synthesizers.append(SilentSynthesizer())
     return synthesizers
 
@@ -295,7 +295,7 @@ class TTSService:
         try:
             await self._telemetry.publish("tts.completed", payload)
         except Exception as exc:  # pragma: no cover - telemetry guard
-            logger.debug("Falha ao enviar métrica TTS: %s", exc)
+            logger.debug("Failed to send TTS metric: %s", exc)
 
     async def _synthesize(self, job: TTSJob) -> TTSResult:
         audio_path, _ = self._cache.resolve(job.text, job.voice)
@@ -320,7 +320,7 @@ class TTSService:
                     "Synthesizer %s falhou: %s", synthesizer.__class__.__name__, exc
                 )
                 continue
-        raise RuntimeError("Nenhum sintetizador conseguiu gerar áudio")
+        raise RuntimeError("No synthesizer was able to generate audio")
 
     @staticmethod
     def _detect_voice_name(synthesizer: Synthesizer) -> str:

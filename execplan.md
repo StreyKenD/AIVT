@@ -77,42 +77,42 @@ Each workstream has a DRI (default: maintainer) and explicit exit criteria. Task
 - [x] Ship `.env.example` parity and docs for required binaries (`ffmpeg`, `libsndfile`, `portaudio`). _(Refreshed telemetry `.env.example` and documented Windows installation/validation steps in `RUN_FIRST.md` and `README.md`.)_
 - [x] Configure GitHub Actions on Windows: `poetry install`, `ruff`, `black --check`, `mypy`, `pytest -q` for both repos. _(Workflows land under `.github/workflows/windows-ci.yml` in each repo.)_
 - [x] Add pre-commit instructions to `RUN_FIRST.md`. _(Pre-commit setup documented in latest RUN_FIRST revision.)_
-- [x] Enforce `poetry lock` reproducibility across repos. _(CI roda `poetry lock --check` em ambos os repositórios e docs orientam o comando localmente.)_
-- [x] Emitir logs estruturados (JSON) por serviço com rotação diária e diretório configurável via `KITSU_LOG_ROOT`, documentando o fluxo no README/RUN_FIRST. _(Novo utilitário `libs.common.configure_json_logging` cobre todos os apps.)_
-- [x] Acceptance: CI green on Windows runners; running `pwsh scripts/run_all_no_docker.ps1 -Action start` boots all services without manual edits. _(Coberto por `tests/test_acceptance_criteria.py::test_windows_stack_scripts_cover_all_services`, garantindo a paridade dos scripts e logs de execução.)_
+- [x] Enforce `poetry lock` reproducibility across repos. _(CI runs `poetry lock --check` in both repositories and the docs instruct running the command locally.)_
+- [x] Emit structured (JSON) logs per service with daily rotation and a configurable directory via `KITSU_LOG_ROOT`, documenting the flow in README/RUN_FIRST. _(New utility `libs.common.configure_json_logging` covers every app.)_
+- [x] Acceptance: CI green on Windows runners; running `pwsh scripts/run_all_no_docker.ps1 -Action start` boots all services without manual edits. _(Covered by `tests/test_acceptance_criteria.py::test_windows_stack_scripts_cover_all_services`, ensuring script parity and execution logs.)_
 
 ### WS2 — Audio Pipeline Completion (ASR ↔ Policy ↔ TTS)
-- [x] Implement WebRTC-VAD (or Silero) integration for ASR frames; emit partials/finals via orchestrator `POST /events/asr`. _(Coberto por testes assíncronos que validam emissões `asr_partial`/`asr_final` e pelo VAD WebRTC configurável.)_
-- [x] Create microphone capture (PyAudio/SoundDevice) fallback for fake audio toggle; ensure Windows device enumeration documented. _(Script `python -m kitsu_vtuber_ai.apps.asr_worker.devices` lista dispositivos e docs atualizados orientam o uso em Windows.)_
+- [x] Implement WebRTC-VAD (or Silero) integration for ASR frames; emit partials/finals via orchestrator `POST /events/asr`. _(Covered by async tests validating `asr_partial`/`asr_final` emissions and the configurable WebRTC VAD.)_
+- [x] Create microphone capture (PyAudio/SoundDevice) fallback for fake audio toggle; ensure Windows device enumeration documented. _(Script `python -m kitsu_vtuber_ai.apps.asr_worker.devices` lists devices and the refreshed docs explain Windows usage.)_
 - [x] Replace TTS stub with Coqui API (primary) and Piper fallback. Support cancellation, viseme timeline, and caching under `artifacts/tts`.
 - [x] Stream policy responses from Ollama (Llama 3 8B) with persona prompt, memory injection, PG-13 moderation filter. Provide SSE harness test.
-- [x] Acceptance: round-trip harness script produces spoken reply ≤1.2s median; telemetry logs ASR/LLM/TTS latências. _(Validação automática via `tests/test_acceptance_criteria.py::test_round_trip_acceptance` e `tests/test_soak_harness.py`, conferindo métricas e telemetria.)_
+- [x] Acceptance: round-trip harness script produces spoken reply ≤1.2s median; telemetry logs ASR/LLM/TTS latencies. _(Automatically validated via `tests/test_acceptance_criteria.py::test_round_trip_acceptance` and `tests/test_soak_harness.py`, checking metrics and telemetry.)_
 
 ### WS3 — Safety, Memory & Persona Management
 - [x] Wire moderation pipeline (pre-policy, post-policy) using `configs/safety` blocklists + custom rules; add sanitized fallback responses.
 - [x] Persist memory summaries to SQLite (`libs/memory`) and expose in `/status`; implement restore gating via `RESTORE_CONTEXT`.
 - [x] Extend persona endpoints to update chaos/energy + safe-mode toggles; validate through tests.
-- [x] Acceptance: curated red-team prompts blocked in integration tests; memory restore persists across orchestrator restart. _(Coberto pelos testes `tests/test_safety.py` e `tests/test_memory.py`, que exercitam restauração de memória e bloqueios PG-13.)_
+- [x] Acceptance: curated red-team prompts blocked in integration tests; memory restore persists across orchestrator restart. _(Covered by `tests/test_safety.py` and `tests/test_memory.py`, which exercise memory restoration and PG-13 blocking.)_
 
 ### WS4 — Live Integrations (Twitch, OBS, VTube Studio)
 - [x] Connect twitchio bot with OAuth, command handlers, rate limiting, and orchestrator bridging (mute/style/scene requests).
 - [x] Implement obsws-python client for scene switching, filters, and panic macro; reconnect/backoff logic.
 - [x] Build VTube Studio WebSocket client with authentication, expression mapping, and viseme-driven mouth cues from TTS output.
-- [x] Acceptance: dry-run script toggles OBS scenes and VTS expressions based on chat commands; telemetry records command latency. _(Coberto pelos testes `tests/test_obs_controller.py`, `tests/test_avatar_controller.py` e `tests/test_twitch_ingest.py`, confirmando integrações e métricas.)_
+- [x] Acceptance: dry-run script toggles OBS scenes and VTS expressions based on chat commands; telemetry records command latency. _(Covered by `tests/test_obs_controller.py`, `tests/test_avatar_controller.py`, and `tests/test_twitch_ingest.py`, confirming integrations and metrics.)_
 
 - [x] Expand telemetry API: aggregated metrics endpoints (`/metrics/latest`), retention pruning, optional API key auth.
-- [x] Wire orchestrator + workers to publish latency, queue depth, failure counters to telemetry. _(TTS/Policy workers enviam métricas via `libs.telemetry.TelemetryClient`; orquestrador já repassa eventos ao backend.)_
+- [x] Wire orchestrator + workers to publish latency, queue depth, failure counters to telemetry. _(TTS/Policy workers send metrics through `libs.telemetry.TelemetryClient`; the orchestrator already forwards events to the backend.)_
 - [x] Upgrade SvelteKit UI: real-time status cards, latency charts, panic/mute/preset buttons hitting control backend.
 - [x] Add CSV export (download button) and soak-test viewer.
-- [x] Registrar métricas de hardware (GPU) via NVML, disponibilizando-as em `/metrics/latest` e documentando o consumo pela equipe de operações.
-- [x] Acceptance: dashboard reflects live metrics, commands confirm success/failure, CSV export validated em browser. _(Testes `kitsu-telemetry/tests/test_api.py` e `kitsu-vtuber-ai/tests/test_control_panel_backend.py` asseguram métricas, comandos e exportação CSV.)_
+- [x] Record hardware metrics (GPU) via NVML, expose them in `/metrics/latest`, and document how the operations team consumes them.
+- [x] Acceptance: dashboard reflects live metrics, commands confirm success/failure, CSV export validated in the browser. _(Tests `kitsu-telemetry/tests/test_api.py` and `kitsu-vtuber-ai/tests/test_control_panel_backend.py` ensure metrics, commands, and CSV export.)_
 
 ### WS6 — QA, Release & Compliance
 - [x] Develop automated soak harness (2h synthetic chat) verifying latency + crash-free metrics.
 - [x] Document pilot stream checklist, rollback plan, and incident response SOP.
 - [x] Ensure license attributions in README/RUN_FIRST + telemetry UI footer.
 - [x] Publish release packaging instructions (PowerShell bundler + README).
-- [x] Acceptance: soak harness passes twice consecutively; documentation reviewed; release artifacts reproducible. _(Suite `tests/test_soak_harness.py` e `tests/test_acceptance_criteria.py` registram execuções determinísticas e publicação de resultados.)_
+- [x] Acceptance: soak harness passes twice consecutively; documentation reviewed; release artifacts reproducible. _(Suite `tests/test_soak_harness.py` and `tests/test_acceptance_criteria.py` record deterministic runs and event publication.)_
 
 ---
 
@@ -177,7 +177,7 @@ Quality gate: no release if CI red, soak harness fails, or moderation regression
 | ✅ | `feature/telemetry-dashboard` | `kitsu-telemetry` | Ship live metrics, controls, CSV export in SvelteKit UI | WS5 |
 | ✅ | `qa/soak-harness` | `kitsu-vtuber-ai` | 2h synthetic chat harness + reporting | WS6 |
 | ⬜ | `docs/release-playbook` | both | Publish runbooks, licensing, release packaging steps | WS6 |
-| ✅ | `infra/gpu-metrics` | `kitsu-vtuber-ai`, `kitsu-telemetry` | Emitir métricas NVML para telemetria e agregá-las no painel | WS1/WS5 |
+| ✅ | `infra/gpu-metrics` | `kitsu-vtuber-ai`, `kitsu-telemetry` | Emit NVML metrics to telemetry and surface them on the dashboard | WS1/WS5 |
 
 Keep backlog updated as new findings appear; drop deprioritized features into a separate “Parking Lot” column to maintain focus on MVP.
 

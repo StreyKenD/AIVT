@@ -1,46 +1,46 @@
 # AGENTS.md
 
-## Objetivo
-Este repositório faz parte do projeto Kitsu.exe (IA VTuber). Siga estes contratos ao propor mudanças.
+## Purpose
+This repository is part of the Kitsu.exe project (VTuber AI). Follow these contracts when proposing changes.
 
-## Como rodar (MVP)
+## How to run (MVP)
 - Python 3.11+
-- Instalar deps: `poetry install` (ou `pip install -r requirements.txt`)
-- Configurar `.env` a partir de `.env.example`
+- Install deps: `poetry install` (or `pip install -r requirements.txt`)
+- Configure `.env` from `.env.example`
 - Dev:
   - Orchestrator/Backend: `uvicorn apps.control_panel_backend.main:app --reload`
-  - (Repo B) API Telemetria: `uvicorn api.main:app --reload`
-  - (Repo B) UI SvelteKit: `pnpm i && pnpm dev`
+  - (Repo B) Telemetry API: `uvicorn api.main:app --reload`
+  - (Repo B) SvelteKit UI: `pnpm i && pnpm dev`
 
-## Dependências de runtime
-- OBS Studio com plugin **OBS WebSocket v5** habilitado (`obsws-python` fixado em `1.7.2` no projeto).
-- Binários externos de áudio/vídeo: `ffmpeg`, `portaudio`, `libsndfile`.
-- Python 3.11+ e Poetry para ambientes isolados; mantenha a versão documentada no README.
+## Runtime dependencies
+- OBS Studio with the **OBS WebSocket v5** plugin enabled (`obsws-python` pinned to `1.7.2`).
+- External audio/video binaries: `ffmpeg`, `portaudio`, `libsndfile`.
+- Python 3.11+ and Poetry for isolated environments; keep the version documented in the README.
 
-## Qualidade
+## Quality
 - Lint/format: `ruff . && black --check .`
-- Tipos: `mypy` (nível permissivo)
-- Testes: `pytest -q` (objetivo: passar 100% dos testes de fumaça)
-- Commits: Convencionais (`feat:`, `fix:`, `chore:`…)
+- Types: `mypy` (permissive level)
+- Tests: `pytest -q` (goal: pass 100% of the smoke tests)
+- Commits: Conventional (`feat:`, `fix:`, `chore:`…)
 
-## Estilo e restrições
-- Assíncrono por padrão (FastAPI/httpx/websockets).
-- Sem adicionar libs pesadas sem justificativa.
-- Código novo SEM `any` desnecessário (TS/pytypes).
-- TTS: **Coqui-TTS** com modelo permissivo (não-XTTS) – manter model card em `licenses/third_party/`.
-- LLM: **Ollama** com **Llama 3 8B** (atribuição obrigatória no README).
+## Style and restrictions
+- Asynchronous by default (FastAPI/httpx/websockets).
+- Do not add heavy libraries without justification.
+- No unnecessary `any` in new code (TS/pytypes).
+- TTS: **Coqui-TTS** with a permissive model (non-XTTS) – keep the model card in `licenses/third_party/`.
+- LLM: **Ollama** with **Llama 3 8B** (attribution required in the README).
 
-## Segurança/Moderação
-- “Modo familiar” ON por padrão.
-- Blocklists/regex em `configs/safety/`.
-- Filtrar palavrões e conteúdo TOS; fallback amigável.
+## Safety/Moderation
+- “Family mode” ON by default.
+- Blocklists/regex in `configs/safety/`.
+- Filter profanity and TOS content; provide a friendly fallback.
 
-## Memória
-- Curta: ring buffer (N últimas mensagens).
-- Persistente: sumários SQLite; restaurar no boot quando `RESTORE_CONTEXT=true`.
+## Memory
+- Short-term: ring buffer (last N messages).
+- Persistent: SQLite summaries; restore on boot when `RESTORE_CONTEXT=true`.
 
-## Critérios de aceite por PR
-- Build e testes passam.
+## PR acceptance criteria
+- Build and tests pass.
 - Lint/format OK.
-- PR pequeno, descrição clara, checklist atualizado.
-- Se alterar endpoints, atualizar `RUN_FIRST.md`.
+- PR is small, clearly described, and checklist updated.
+- Update `RUN_FIRST.md` if you change endpoints.

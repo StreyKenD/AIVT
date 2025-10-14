@@ -665,7 +665,7 @@ async def acquire_audio_source(config: ASRConfig) -> AsyncIterator[AudioSource]:
             continue
         try:
             await backend.start()
-            logger.info("ASR worker capturando áudio com %s", name)
+            logger.info("ASR worker capturing audio with %s", name)
 
             try:
                 yield backend
@@ -679,7 +679,7 @@ async def acquire_audio_source(config: ASRConfig) -> AsyncIterator[AudioSource]:
             with contextlib.suppress(Exception):
                 await backend.stop()
 
-    logger.warning("Nenhum backend de áudio disponível; usando modo sintético")
+    logger.warning("No audio backend available; using synthetic mode")
     fallback = FakeAudioSource(config.frame_bytes, frame_interval)
     try:
         yield fallback

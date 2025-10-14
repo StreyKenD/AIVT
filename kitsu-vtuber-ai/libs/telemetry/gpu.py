@@ -14,7 +14,7 @@ class TelemetryPublisher(Protocol):
 
 
 class GPUMonitor:
-    """Publica métricas de GPU via telemetria (NVML)."""
+    """Publishes GPU metrics via telemetry (NVML)."""
 
     def __init__(
         self,
@@ -33,7 +33,7 @@ class GPUMonitor:
 
     async def start(self) -> None:
         if self._telemetry is None:
-            logger.info("Monitor de GPU desabilitado: telemetria ausente")
+            logger.info("GPU monitor disabled: telemetry unavailable")
             return
         async with self._lock:
             if self._task is not None:
@@ -41,13 +41,13 @@ class GPUMonitor:
             if self._nvml is None:
                 self._nvml = _load_nvml()
             if self._nvml is None:
-                logger.info("Monitor de GPU desabilitado: pynvml não encontrado")
+                logger.info("GPU monitor disabled: pynvml not found")
                 return
             try:
                 self._nvml.nvmlInit()  # type: ignore[attr-defined]
                 self._initialized = True
-            except Exception as exc:  # pragma: no cover - ambiente sem GPU
-                logger.debug("Falha ao inicializar NVML: %s", exc)
+            except Exception as exc:  # pragma: no cover - environment without GPU
+                logger.debug("Failed to initialize NVML: %s", exc)
                 return
             self._task = asyncio.create_task(self._runner())
 
@@ -59,13 +59,13 @@ class GPUMonitor:
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:  # pragma: no cover - cancelamento esperado
+            except asyncio.CancelledError:  # pragma: no cover - expected cancellation
                 pass
         if self._initialized and self._nvml is not None:
             try:
                 self._nvml.nvmlShutdown()  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - desligamento defensivo
-                logger.debug("Erro ao finalizar NVML", exc_info=True)
+            except Exception:  # pragma: no cover - defensive shutdown
+                logger.debug("Error shutting down NVML", exc_info=True)
         self._initialized = False
         self._nvml = None
         if self._telemetry is not None:
@@ -78,8 +78,8 @@ class GPUMonitor:
         for payload in payloads:
             try:
                 await self._telemetry.publish("hardware.gpu", payload)
-            except Exception as exc:  # pragma: no cover - falha externa
-                logger.debug("Erro ao publicar métricas de GPU: %s", exc)
+            except Exception as exc:  # pragma: no cover - external failure
+                logger.debug("Error publishing GPU metrics: %s", exc)
 
     async def _runner(self) -> None:
         try:
@@ -88,14 +88,14 @@ class GPUMonitor:
                 await asyncio.sleep(self._interval)
         except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover - laço de proteção
-            logger.exception("Loop do monitor de GPU falhou")
+        except Exception:  # pragma: no cover - safety loop
+            logger.exception("GPU monitor loop failed")
         finally:
             if self._initialized and self._nvml is not None:
                 try:
                     self._nvml.nvmlShutdown()  # type: ignore[attr-defined]
                 except Exception:
-                    logger.debug("Erro ao finalizar NVML", exc_info=True)
+                    logger.debug("Error shutting down NVML", exc_info=True)
                 self._initialized = False
                 self._nvml = None
 
@@ -112,8 +112,8 @@ def _collect_metrics(nvml: Any) -> list[dict[str, object]]:
     payloads: list[dict[str, object]] = []
     try:
         count = nvml.nvmlDeviceGetCount()  # type: ignore[attr-defined]
-    except Exception as exc:  # pragma: no cover - NVML inconsistente
-        logger.debug("NVML indisponível: %s", exc)
+    except Exception as exc:  # pragma: no cover - inconsistent NVML
+        logger.debug("NVML unavailable: %s", exc)
         return payloads
 
     for index in range(count):
@@ -125,8 +125,8 @@ def _collect_metrics(nvml: Any) -> list[dict[str, object]]:
             mem = nvml.nvmlDeviceGetMemoryInfo(handle)  # type: ignore[attr-defined]
             fan_speed = _safe_nvml_call(nvml, "nvmlDeviceGetFanSpeed", handle)
             power = _safe_nvml_call(nvml, "nvmlDeviceGetPowerUsage", handle)
-        except Exception as exc:  # pragma: no cover - GPU específica falhou
-            logger.debug("Erro ao coletar dados da GPU %s: %s", index, exc)
+        except Exception as exc:  # pragma: no cover - specific GPU failed
+            logger.debug("Error collecting data for GPU %s: %s", index, exc)
             continue
 
         used_mb = round(mem.used / (1024 * 1024), 2)

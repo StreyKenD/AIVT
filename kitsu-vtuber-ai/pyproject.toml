@@ -7,14 +7,14 @@ authors = [{ name = "Kitsu Team", email = "devs@example.com" }]
 requires-python = ">=3.11,<3.12"
 
 [tool.poetry]
-# Só o que é específico do Poetry
+# Poetry-specific configuration
 packages = [
   { include = "apps" },
   { include = "libs" },
   { include = "configs" }
 ]
 
-# Você pode manter o grupo de dev no namespace do Poetry
+# You can keep the dev group within the Poetry namespace
 [tool.poetry.group.dev.dependencies]
 black = ">=24.4.2,<25.0.0"
 isort = ">=5.13.2,<6.0.0"

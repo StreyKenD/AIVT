@@ -1,4 +1,4 @@
-"""Aplicação FastAPI responsável pela telemetria."""
+"""FastAPI application responsible for telemetry."""
 from __future__ import annotations
 
 import os
@@ -19,10 +19,10 @@ _RETENTION_SECONDS = int(os.getenv("TELEMETRY_RETENTION_SECONDS", "0") or 0)
 
 
 class TelemetryEventIn(BaseModel):
-    type: str = Field(..., description="Tipo do evento (ex.: frame, emotion)")
-    ts: datetime = Field(..., description="Timestamp do evento")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Dados associados")
-    source: str | None = Field(None, description="Origem opcional do evento")
+    type: str = Field(..., description="Event type (e.g. frame, emotion)")
+    ts: datetime = Field(..., description="Event timestamp")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Associated data")
+    source: str | None = Field(None, description="Optional event source")
 
     @validator("type")
     def _validate_type(cls, value: str) -> str:
@@ -39,10 +39,10 @@ class TelemetryEventIn(BaseModel):
 
 
 class LegacyTelemetryIn(BaseModel):
-    source: str = Field(..., description="Origem do evento (legado)")
-    event_type: str = Field(..., description="Tipo do evento (legado)")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Dados associados")
-    created_at: datetime | None = Field(None, description="Timestamp opcional do legado")
+    source: str = Field(..., description="Event source (legacy)")
+    event_type: str = Field(..., description="Event type (legacy)")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Associated data")
+    created_at: datetime | None = Field(None, description="Optional legacy timestamp")
 
     @validator("event_type")
     def _validate_event_type(cls, value: str) -> str:
@@ -59,9 +59,9 @@ class LegacyTelemetryIn(BaseModel):
 
 
 class TelemetryOut(BaseModel):
-    type: str = Field(..., description="Tipo do evento")
-    ts: str = Field(..., description="Timestamp do evento em formato ISO-8601")
-    payload: dict[str, Any] = Field(default_factory=dict, description="Dados associados")
+    type: str = Field(..., description="Event type")
+    ts: str = Field(..., description="Event timestamp in ISO-8601 format")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Associated data")
 
     @classmethod
     def from_storage(cls, event: storage.TelemetryEvent) -> "TelemetryOut":
@@ -72,7 +72,7 @@ async def _require_api_key(x_api_key: str | None = Header(None)) -> None:
     if not _API_KEY:
         return
     if x_api_key != _API_KEY:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key inválida")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
 def _load_allowed_origins() -> list[str]:
@@ -89,7 +89,7 @@ def _normalize_events(payload: Any) -> list[TelemetryEventIn]:
         if not payload:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Nenhum evento fornecido",
+                detail="No event provided",
             )
         return [_coerce_event(item) for item in payload]
     return [_coerce_event(payload)]
@@ -99,7 +99,7 @@ def _coerce_event(item: Any) -> TelemetryEventIn:
     if not isinstance(item, dict):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Evento inválido",
+            detail="Invalid event",
         )
 
     if "type" in item and "ts" in item:
@@ -117,7 +117,7 @@ def _coerce_event(item: Any) -> TelemetryEventIn:
 
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail="Evento inválido: campos obrigatórios ausentes",
+        detail="Invalid event: missing required fields",
     )
 
 

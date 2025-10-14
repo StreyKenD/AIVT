@@ -16,7 +16,7 @@ class ModerationResult:
 
 
 class ModerationPipeline:
-    """Aplica blocklists síncronas com interface assíncrona opcional."""
+    """Applies synchronous blocklists with an optional asynchronous interface."""
 
     def __init__(
         self,
@@ -59,7 +59,7 @@ class ModerationPipeline:
         match = self._match(prompt, self._pre_patterns)
         if match is None:
             return ModerationResult(True, None, prompt)
-        sanitized = self._fallbacks.get(self._fallback_key, "Mensagem bloqueada.")
+        sanitized = self._fallbacks.get(self._fallback_key, "Message blocked.")
         return ModerationResult(False, f"pre_block:{match.pattern}", sanitized)
 
     async def guard_response(self, response: str) -> ModerationResult:
@@ -71,7 +71,7 @@ class ModerationPipeline:
         match = self._match(response, self._post_patterns)
         if match is None:
             return ModerationResult(True, None, response)
-        sanitized = self._fallbacks.get(self._fallback_key, "Mensagem bloqueada.")
+        sanitized = self._fallbacks.get(self._fallback_key, "Message blocked.")
         return ModerationResult(False, f"post_block:{match.pattern}", sanitized)
 
 

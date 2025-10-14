@@ -261,8 +261,8 @@ async function controlRequest<T>(path: string, init: RequestInit = {}): Promise<
   if (!response.ok) {
     const message =
       typeof parsed === 'object' && parsed !== null && 'detail' in parsed
-        ? String((parsed as Record<string, unknown>).detail ?? 'Falha na requisição')
-        : `Falha na requisição (${response.status})`;
+        ? String((parsed as Record<string, unknown>).detail ?? 'Request failed')
+        : `Request failed with status ${response.status}`;
     throw new ApiError(message, response.status, parsed);
   }
 

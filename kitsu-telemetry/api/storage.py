@@ -1,4 +1,4 @@
-"""Camada de persistência da telemetria."""
+"""Telemetry persistence layer."""
 from __future__ import annotations
 
 import csv
@@ -20,7 +20,7 @@ _NUMERIC_SUFFIXES = ("_ms", "_pct", "_c", "_w", "_mb")
 
 @dataclass(slots=True)
 class TelemetryEvent:
-    """Representa um evento recebido pela API de telemetria."""
+    """Represents an event received by the telemetry API."""
 
     type: str
     ts: str
@@ -78,7 +78,7 @@ def _accumulate_numeric(bucket: dict[str, Any], key: str, value: Any) -> None:
 
 
 async def init_db(db_path: str | None = None) -> None:
-    """Garante que a tabela de eventos exista."""
+    """Ensure the events table exists."""
 
     database_path = _resolve_db_path(db_path)
     async with aiosqlite.connect(database_path) as conn:
@@ -98,7 +98,7 @@ async def init_db(db_path: str | None = None) -> None:
 
 
 async def insert_event(event: TelemetryEvent, db_path: str | None = None) -> int:
-    """Insere um evento na base e retorna o ID criado."""
+    """Insert an event into the database and return the created ID."""
 
     database_path = _resolve_db_path(db_path)
     async with aiosqlite.connect(database_path) as conn:
@@ -175,7 +175,7 @@ async def list_events(
 async def stream_events_as_csv(
     *, db_path: str | None = None, fieldnames: Sequence[str] | None = None
 ) -> AsyncIterator[str]:
-    """Gera o conteúdo CSV em streaming."""
+    """Stream the CSV content."""
 
     database_path = _resolve_db_path(db_path)
     header = list(fieldnames or _DEFAULT_CSV_HEADER)
@@ -208,7 +208,7 @@ async def stream_events_as_csv(
 async def export_events(
     *, db_path: str | None = None, fieldnames: Sequence[str] | None = None
 ) -> str:
-    """Exporta todos os eventos em uma única string CSV (útil para testes)."""
+    """Export all events into a single CSV string (useful for tests)."""
 
     chunks: list[str] = []
     async for chunk in stream_events_as_csv(db_path=db_path, fieldnames=fieldnames):
@@ -217,7 +217,7 @@ async def export_events(
 
 
 async def prune_events(max_age_seconds: int, db_path: str | None = None) -> int:
-    """Remove eventos mais antigos que o limite configurado."""
+    """Remove events older than the configured limit."""
 
     if max_age_seconds <= 0:
         return 0
@@ -235,7 +235,7 @@ async def prune_events(max_age_seconds: int, db_path: str | None = None) -> int:
 async def latest_metrics(
     *, window_seconds: int = 300, db_path: str | None = None
 ) -> dict[str, Any]:
-    """Calcula métricas agregadas para a janela deslizante informada."""
+    """Calculate aggregated metrics for the provided sliding window."""
 
     window_seconds = max(60, int(window_seconds))
     cutoff = _utcnow() - timedelta(seconds=window_seconds)

@@ -130,8 +130,8 @@ def gather_devices(
 
 def _format_table(entries: Sequence[DeviceEntry]) -> str:
     if not entries:
-        return "Nenhum dispositivo de entrada encontrado."
-    headers = ("Backend", "Identificador", "Nome", "Canais", "Host", "Default")
+        return "No input devices were found."
+    headers = ("Backend", "Identifier", "Name", "Channels", "Host", "Default")
     rows = [headers]
     for entry in entries:
         rows.append(
@@ -154,12 +154,12 @@ def _format_table(entries: Sequence[DeviceEntry]) -> str:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Lista os dispositivos de áudio disponíveis para o worker de ASR.",
+        description="List the audio devices available to the ASR worker.",
     )
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Exibe o resultado em JSON (UTF-8).",
+        help="Show the result in JSON (UTF-8).",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 

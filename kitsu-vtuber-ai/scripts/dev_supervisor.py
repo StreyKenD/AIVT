@@ -6,20 +6,20 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict
 
 """
-Supervisor leve para desenvolvimento local.
-- Roda todos os serviços em paralelo (uma janela).
-- Prefixa logs com o nome do serviço.
-- Suporta Poetry (flag -UsePoetry).
-- Fecha tudo no Ctrl+C (no Windows usa taskkill /T /F p/ matar árvore).
+Lightweight supervisor for local development.
+- Runs all services in parallel (single window).
+- Prefixes logs with the service name.
+- Supports Poetry (use the -UsePoetry flag).
+- Closes everything with Ctrl+C (uses taskkill /T /F on Windows to terminate the process tree).
 
-Uso:
-  # sem Poetry
+Usage:
+  # without Poetry
   python scripts/dev_supervisor.py
 
-  # com Poetry
+  # with Poetry
   poetry run python scripts/dev_supervisor.py -UsePoetry
 
-Env úteis:
+Useful env vars:
   ORCH_HOST=127.0.0.1
   ORCH_PORT=8000
 """
@@ -58,7 +58,7 @@ def build_services(use_poetry: bool) -> List[Service]:
 async def run_service(
     svc: Service, cwd: str, procs: Dict[str, asyncio.subprocess.Process]
 ):
-    # shell=True para interpretar a linha completa com pipes/redireções se necessário
+    # shell=True to interpret the full command with pipes/redirection when needed
     proc = await asyncio.create_subprocess_shell(
         svc.cmd,
         cwd=cwd,
@@ -76,7 +76,7 @@ async def run_service(
                 text = str(line)
             print(f"[{svc.name}] {text}")
     except asyncio.CancelledError:
-        # será tratado no shutdown
+        # handled during shutdown
         pass
     finally:
         rc = await proc.wait()
@@ -91,41 +91,41 @@ async def main():
     services = build_services(use_poetry)
     procs: Dict[str, asyncio.subprocess.Process] = {}
 
-    # cria tarefas para cada serviço
+    # create tasks for each service
     tasks = [asyncio.create_task(run_service(s, repo_root, procs)) for s in services]
     print("[SUP] launching services...")
     print("[SUP] working dir:", repo_root)
-    print("[SUP] Ctrl+C para encerrar todos")
+    print("[SUP] Ctrl+C to stop all services")
 
     try:
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         print("\n[SUP] interrupt received, shutting down...")
     finally:
-        # tentativa de shutdown limpa
+        # attempt a clean shutdown
         await terminate_all(procs)
 
 
 async def terminate_all(procs: Dict[str, asyncio.subprocess.Process]):
     if not procs:
         return
-    # Primeiro tenta terminar normalmente
+    # First try to terminate gracefully
     for name, p in procs.items():
         if p.returncode is None:
             try:
                 if IS_WINDOWS:
-                    # força matar árvore de processos no Windows
-                    # /T mata filhos; /F força
+                    # force kill the process tree on Windows
+                    # /T kills child processes; /F forces termination
                     os.system(f"taskkill /PID {p.pid} /T /F >NUL 2>&1")
                 else:
                     p.terminate()
             except Exception as e:
                 print(f"[SUP] error terminate {name}: {e}")
 
-    # Aguarda um pouco
+    # Wait briefly
     await asyncio.sleep(0.5)
 
-    # Garante que morreu
+    # Ensure processes are gone
     for name, p in procs.items():
         if p.returncode is None:
             try:
