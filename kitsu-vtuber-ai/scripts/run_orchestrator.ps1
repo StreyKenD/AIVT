@@ -3,10 +3,10 @@ param(
 )
 
 $serviceManager = Join-Path $PSScriptRoot 'service_manager.ps1'
-$host = if ($env:ORCH_HOST) { $env:ORCH_HOST } else { '127.0.0.1' }
-$port = if ($env:ORCH_PORT) { $env:ORCH_PORT } else { '8000' }
+$listenHost = if ($env:ORCH_HOST) { $env:ORCH_HOST } else { '127.0.0.1' }
+$listenPort = if ($env:ORCH_PORT) { $env:ORCH_PORT } else { '8000' }
 
-$arguments = @('run', 'uvicorn', 'apps.orchestrator.main:app', '--host', $host, '--port', $port)
+$arguments = @('run', 'uvicorn', 'apps.orchestrator.main:app', '--host', $listenHost, '--port', $listenPort)
 if ($env:UVICORN_RELOAD -eq '1') {
     $arguments += '--reload'
 }
