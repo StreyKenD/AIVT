@@ -50,17 +50,17 @@ switch ($Action) {
             $existingPid = [int](Get-Content $pidFile)
             $proc = Get-ServiceProcess -Pid $existingPid
             if ($proc) {
-                Write-Warning "Service '$ServiceName' is already running (PID $existingPid)."
+                Write-Warning "Service '${ServiceName}' is already running (PID $existingPid)."
                 return
             }
         }
 
-        Write-Host "[kitsu] Starting $ServiceName..." -ForegroundColor Cyan
+        Write-Host "[kitsu] Starting ${ServiceName}..." -ForegroundColor Cyan
         $stdoutLog = $null
         $stderrLog = $null
 
         if ($Command.Length -eq 0) {
-            throw "Command argument list for '$ServiceName' cannot be empty."
+            throw "Command argument list for '${ServiceName}' cannot be empty."
         }
 
         try {
@@ -70,7 +70,7 @@ switch ($Action) {
             $stdoutLog = "${logPrefix}.out.log"
             $stderrLog = "${logPrefix}.err.log"
         } catch {
-            throw "Failed to prepare log directory for '$ServiceName': $($_.Exception.Message)"
+            throw "Failed to prepare log directory for '${ServiceName}': $($_.Exception.Message)"
         }
 
         try {
@@ -82,11 +82,11 @@ switch ($Action) {
                 startedAt = (Get-Date).ToString('o')
             }
             $metadata | ConvertTo-Json | Set-Content -Path $metaFile
-            Write-Host "[kitsu] $ServiceName started with PID $($process.Id)."
+            Write-Host "[kitsu] ${ServiceName} started with PID $($process.Id)."
             Write-Host "        stdout → $stdoutLog" -ForegroundColor DarkGray
             Write-Host "        stderr → $stderrLog" -ForegroundColor DarkGray
         } catch {
-            Write-Error "Failed to start $ServiceName: $($_.Exception.Message)"
+            Write-Error "Failed to start ${ServiceName}: $($_.Exception.Message)"
             if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -ErrorAction SilentlyContinue }
             if (Test-Path $stderrLog) { Remove-Item $stderrLog -ErrorAction SilentlyContinue }
             if (Test-Path $metaFile) { Remove-Item $metaFile -ErrorAction SilentlyContinue }
@@ -95,24 +95,24 @@ switch ($Action) {
     }
     'stop' {
         if (-not (Test-Path $pidFile)) {
-            Write-Warning "No PID file found for '$ServiceName'. Nothing to stop."
+            Write-Warning "No PID file found for '${ServiceName}'. Nothing to stop."
             return
         }
 
         $pid = [int](Get-Content $pidFile)
         $process = Get-ServiceProcess -Pid $pid
         if (-not $process) {
-            Write-Warning "Process $pid for '$ServiceName' is no longer running. Cleaning up PID file."
+            Write-Warning "Process $pid for '${ServiceName}' is no longer running. Cleaning up PID file."
             Remove-Item $pidFile -ErrorAction SilentlyContinue
             return
         }
 
-        Write-Host "[kitsu] Stopping $ServiceName (PID $pid)..." -ForegroundColor Yellow
+        Write-Host "[kitsu] Stopping ${ServiceName} (PID $pid)..." -ForegroundColor Yellow
         try {
             Stop-Process -Id $pid -ErrorAction Stop
-            Write-Host "[kitsu] $ServiceName stopped."
+            Write-Host "[kitsu] ${ServiceName} stopped."
         } catch {
-            Write-Error "Failed to stop $ServiceName: $($_.Exception.Message)"
+            Write-Error "Failed to stop ${ServiceName}: $($_.Exception.Message)"
             throw
         }
 
@@ -121,7 +121,7 @@ switch ($Action) {
     }
     'status' {
         if (-not (Test-Path $pidFile)) {
-            Write-Host "[kitsu] $ServiceName is stopped." -ForegroundColor DarkGray
+            Write-Host "[kitsu] ${ServiceName} is stopped." -ForegroundColor DarkGray
             if ($Description) {
                 Write-Host "        $Description"
             }
@@ -134,7 +134,7 @@ switch ($Action) {
         $pid = [int](Get-Content $pidFile)
         $process = Get-ServiceProcess -Pid $pid
         if ($process) {
-            Write-Host "[kitsu] $ServiceName running (PID $pid)." -ForegroundColor Green
+            Write-Host "[kitsu] ${ServiceName} running (PID $pid)." -ForegroundColor Green
             if (Test-Path $metaFile) {
                 try {
                     $meta = Get-Content $metaFile | ConvertFrom-Json
@@ -148,11 +148,11 @@ switch ($Action) {
                         Write-Host "        started → $($meta.startedAt)" -ForegroundColor DarkGray
                     }
                 } catch {
-                    Write-Warning "Unable to read metadata for '$ServiceName': $($_.Exception.Message)"
+                    Write-Warning "Unable to read metadata for '${ServiceName}': $($_.Exception.Message)"
                 }
             }
         } else {
-            Write-Host "[kitsu] $ServiceName has a stale PID file (PID $pid)." -ForegroundColor DarkYellow
+            Write-Host "[kitsu] ${ServiceName} has a stale PID file (PID $pid)." -ForegroundColor DarkYellow
             Remove-Item $pidFile -ErrorAction SilentlyContinue
             Remove-Item $metaFile -ErrorAction SilentlyContinue
         }
