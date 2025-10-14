@@ -35,10 +35,10 @@ function Resolve-LogDirectory {
 }
 
 function Get-ServiceProcess {
-    param([int]$Pid)
+    param([int]$ProcessId)
 
     try {
-        return Get-Process -Id $Pid -ErrorAction Stop
+        return Get-Process -Id $ProcessId -ErrorAction Stop
     } catch {
         return $null
     }
@@ -48,7 +48,7 @@ switch ($Action) {
     'start' {
         if (Test-Path $pidFile) {
             $existingPid = [int](Get-Content $pidFile)
-            $proc = Get-ServiceProcess -Pid $existingPid
+            $proc = Get-ServiceProcess -ProcessId $existingPid
             if ($proc) {
                 Write-Warning "Service '${ServiceName}' is already running (PID $existingPid)."
                 return
@@ -100,7 +100,7 @@ switch ($Action) {
         }
 
         $servicePid = [int](Get-Content $pidFile)
-        $process = Get-ServiceProcess -Pid $servicePid
+        $process = Get-ServiceProcess -ProcessId $servicePid
         if (-not $process) {
             Write-Warning "Process $servicePid for '${ServiceName}' is no longer running. Cleaning up PID file."
             Remove-Item $pidFile -ErrorAction SilentlyContinue
@@ -132,7 +132,7 @@ switch ($Action) {
         }
 
         $servicePid = [int](Get-Content $pidFile)
-        $process = Get-ServiceProcess -Pid $servicePid
+        $process = Get-ServiceProcess -ProcessId $servicePid
         if ($process) {
             Write-Host "[kitsu] ${ServiceName} running (PID $servicePid)." -ForegroundColor Green
             if (Test-Path $metaFile) {
