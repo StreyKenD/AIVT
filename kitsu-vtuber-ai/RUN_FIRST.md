@@ -41,7 +41,7 @@ CONTROL_PANEL_HOST=127.0.0.1
 CONTROL_PANEL_PORT=8100
 ORCHESTRATOR_BASE_URL=http://127.0.0.1:8000
 TELEMETRY_BASE_URL=http://127.0.0.1:8001
-TELEMETRY_API_URL=http://localhost:8001/api
+TELEMETRY_API_URL=http://127.0.0.1:8001
 TELEMETRY_API_KEY=dev-secret
 ORCHESTRATOR_URL=http://127.0.0.1:8000
 ORCHESTRATOR_API_KEY=
@@ -51,6 +51,9 @@ GPU_METRICS_INTERVAL_SECONDS=30
 TWITCH_CHANNEL=your_channel
 TWITCH_OAUTH_TOKEN=oauth:xxxxxxx
 TWITCH_BOT_NICK=kitsu-bot
+TWITCH_CLIENT_ID=
+TWITCH_CLIENT_SECRET=
+TWITCH_REFRESH_TOKEN=
 OBS_WS_URL=ws://127.0.0.1:4455
 OBS_WS_PASSWORD=
 VTS_URL=ws://127.0.0.1:8001
@@ -62,7 +65,7 @@ KITSU_LOG_ROOT=logs
 >
 > On Windows, prefer an absolute path for `KITSU_LOG_ROOT` (for example, `C:\\kitsu\\logs`) so logs survive repo cleanups.
 >
-> For VTube Studio, open the plugin menu and authorize "Kitsu.exe Controller"; copy the generated token to `VTS_AUTH_TOKEN`. Generate the Twitch OAuth token with `chat:read chat:edit` scopes and update `TWITCH_OAUTH_TOKEN`.
+> For VTube Studio, open the plugin menu and authorize "Kitsu.exe Controller"; copy the generated token to `VTS_AUTH_TOKEN`. Generate the Twitch OAuth token with `chat:read chat:edit` scopes and update `TWITCH_OAUTH_TOKEN`. If you save `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN`, you can rotate tokens later with `poetry run python scripts/refresh_twitch_token.py`.
 >
 > To find the correct microphone, run `poetry run python -m kitsu_vtuber_ai.apps.asr_worker.devices`. The command prints the name (sounddevice) and index (PyAudio) that can be used in `ASR_INPUT_DEVICE`. Use `ASR_FAKE_AUDIO=1` for hardware-free tests.
 

@@ -1,0 +1,15 @@
+{
+    "telemetry_api":  {
+                          "pid":  23004
+                      },
+    "telemetry_ui":  {
+                         "launcher":  "cmd",
+                         "pid":  21008
+                     },
+    "orchestrator":  {
+                         "pid":  20788
+                     },
+    "control_panel":  {
+                          "pid":  15668
+                      }
+}

@@ -74,14 +74,30 @@ Open **two terminals** (or tabs) and run the following from the project root:
 1. **Control Panel Backend** – handles configuration and acts as the main API for the UI.
    ```bash
    cd kitsu-vtuber-ai
-   poetry run uvicorn apps.control_panel_backend.main:app \
-     --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
+   poetry run uvicorn apps.control_panel_backend.main:app --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
+   ```
+
+   PowerShell (Windows) — use PowerShell environment variables and explicit defaults:
+
+   ```powershell
+   cd .\kitsu-vtuber-ai
+   $host = $env:CONTROL_PANEL_HOST -or '127.0.0.1'
+   $port = [int]($env:CONTROL_PANEL_PORT -as [int] ?? 8100)
+   poetry run uvicorn apps.control_panel_backend.main:app --reload --host $host --port $port
    ```
 2. **Orchestrator (HTTP + WebSocket)** – coordinates workers and real-time events.
    ```bash
    cd kitsu-vtuber-ai
-   poetry run uvicorn apps.orchestrator.main:app \
-     --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+   poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+   ```
+
+   PowerShell (Windows):
+
+   ```powershell
+   cd .\kitsu-vtuber-ai
+   $host = $env:ORCH_HOST -or '127.0.0.1'
+   $port = [int]($env:ORCH_PORT -as [int] ?? 8000)
+   poetry run uvicorn apps.orchestrator.main:app --reload --host $host --port $port
    ```
 
 Verify the orchestrator is healthy from another terminal:
@@ -97,11 +113,20 @@ You should receive a JSON payload indicating the orchestrator is online.
 Use two additional terminals for the telemetry backend and frontend:
 
 1. **Telemetry API (FastAPI)**
-   ```bash
-   cd kitsu-telemetry
-   poetry run uvicorn api.main:app \
-     --reload --host ${API_HOST:-127.0.0.1} --port ${API_PORT:-8001}
-   ```
+    ```bash
+    cd kitsu-telemetry
+    poetry run uvicorn api.main:app \
+       --reload --host ${API_HOST:-127.0.0.1} --port ${API_PORT:-8001}
+    ```
+
+    PowerShell (Windows):
+
+    ```powershell
+    cd .\kitsu-telemetry
+    $host = $env:API_HOST -or '127.0.0.1'
+    $port = [int]($env:API_PORT -as [int] ?? 8001)
+    poetry run uvicorn api.main:app --reload --host $host --port $port
+    ```
    - If you set `TELEMETRY_API_KEY` in `.env`, include the header `X-API-KEY: <your key>` on client requests.
 
 2. **Telemetry Dashboard (SvelteKit + pnpm)**

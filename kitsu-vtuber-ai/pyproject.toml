@@ -1,13 +1,9 @@
-[project]
+[tool.poetry]
 name = "kitsu-vtuber-ai"
 version = "0.1.0"
 description = "Core services for the Kitsu.exe VTuber AI pipeline"
+authors = ["Kitsu Team <devs@example.com>"]
 readme = "README.md"
-authors = [{ name = "Kitsu Team", email = "devs@example.com" }]
-requires-python = ">=3.11,<3.12"
-
-[tool.poetry]
-# Poetry-specific configuration
 packages = [
   { include = "apps" },
   { include = "libs" },
@@ -27,17 +23,20 @@ deptry = "^0.23.1"
 
 
 [tool.poetry.dependencies]
+python = ">=3.11,<3.12"
 httpx = "^0.28.1"
 aiosqlite = "^0.21.0"
 websockets = "^15.0.1"
 fastapi = "^0.119.0"
 pydantic = "^2.12.1"
+python-dotenv = "^1.0.1"
 obsws-python = "^1.8.0"
 tenacity = "^9.1.2"
 uvicorn = "^0.37.0"
 tts = "^0.22.0"
 twitchio = "^3.1.0"
 pynvml = "^13.0.1"
+faster-whisper = "^1.2.0"
 [tool.mypy]
 ignore_missing_imports = true
 

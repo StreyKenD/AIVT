@@ -97,12 +97,14 @@ These variables control how the orchestrator exposes HTTP/WebSocket endpoints an
 
 - `ORCH_HOST`: bind interface used by `uvicorn` (default `127.0.0.1`). Use `0.0.0.0` when exposing the API to other machines or to a UI hosted outside the local host.
 - `ORCH_PORT`: public port for the orchestrator. Align this value with `PUBLIC_ORCH_BASE_URL` and `PUBLIC_ORCH_WS_URL` in the `kitsu-telemetry` repository; `8000` is the recommended development value.
-- `TELEMETRY_API_URL`: base URL (e.g., `http://localhost:8001/api`) where state events are published. When empty, the orchestrator runs without external telemetry.
+- `TELEMETRY_API_URL`: base URL (e.g., `http://127.0.0.1:8001`) where state events are published. When empty, the orchestrator runs without external telemetry.
 - `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: optional tokens to protect the `/events` endpoint (telemetry) and `/persona`/`/toggle` when accessed by external integrations.
 - `ORCHESTRATOR_URL`: HTTP address used by workers and integrations (Twitch, OBS, VTS) to publish events to the orchestrator.
+
+> Tip: once `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN` are stored in `.env`, refresh the chat token any time with `poetry run python scripts/refresh_twitch_token.py`.
 - `TTS_OUTPUT_DIR`: folder where synthesized audio is cached (default `artifacts/tts`).
 - `TTS_MODEL_NAME` / `PIPER_MODEL`: identifiers for the Coqui/Piper models loaded by the workers (see [TTS Worker](#tts-worker)).
-- `TWITCH_CHANNEL` / `TWITCH_OAUTH_TOKEN`: credentials for the `twitchio` bot responsible for reading commands in real time. Set `TWITCH_BOT_NICK` and `TWITCH_DEFAULT_SCENE` if you want to customize the nickname or the fallback scene.
+- `TWITCH_CHANNEL` / `TWITCH_OAUTH_TOKEN`: credentials for the `twitchio` bot responsible for reading commands in real time. Provide `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN` if you want to let the helper script rotate tokens automatically. Set `TWITCH_BOT_NICK` and `TWITCH_DEFAULT_SCENE` to customize the nickname or fallback scene.
 - `OBS_WS_URL` / `OBS_WS_PASSWORD`: **obs-websocket v5** endpoint and password configured in OBS. `OBS_SCENES` accepts a comma-separated list used by the demo script; `OBS_PANIC_FILTER` indicates the filter triggered by the panic macro.
 - `VTS_URL` / `VTS_AUTH_TOKEN`: WebSocket endpoint and persistent token for VTube Studio. Adjust `VTS_PLUGIN_NAME`/`VTS_DEVELOPER` to identify the plugin inside VTS settings.
 - `KITSU_LOG_ROOT`: directory where each service writes daily-rotated JSON `.log` files (default `logs`).
