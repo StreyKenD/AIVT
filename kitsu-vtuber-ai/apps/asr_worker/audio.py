@@ -14,7 +14,11 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 
 class MicrophoneStream:
-    """Captures audio frames from the default microphone using sounddevice."""
+    """Capture audio frames from the configured input device via sounddevice.
+
+    The `RawInputStream` honours :attr:`ASRConfig.input_device` when provided,
+    falling back to the system default microphone when the field is unset.
+    """
 
     def __init__(self, config: ASRConfig) -> None:
         if sd is None:
