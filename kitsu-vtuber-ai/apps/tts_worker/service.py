@@ -127,13 +127,17 @@ class CoquiSynthesizer:
 
 class PiperSynthesizer:
     def __init__(self) -> None:
-        self._binary = Path(os.getenv("PIPER_PATH", "piper"))
-        self._model = Path(os.getenv("PIPER_MODEL", ""))
-        self._config = Path(os.getenv("PIPER_CONFIG", ""))
-        if not self._model:
+        raw_binary = os.getenv("PIPER_PATH", "piper")
+        raw_model = os.getenv("PIPER_MODEL", "")
+
+        if not raw_model or not raw_model.strip():
             raise RuntimeError("PIPER_MODEL is not configured")
-        if not self._binary:
+        if not raw_binary or not raw_binary.strip():
             raise RuntimeError("PIPER_PATH is not configured")
+
+        self._binary = Path(raw_binary)
+        self._model = Path(raw_model)
+        self._config = Path(os.getenv("PIPER_CONFIG", ""))
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
