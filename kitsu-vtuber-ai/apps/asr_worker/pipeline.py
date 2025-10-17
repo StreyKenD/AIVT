@@ -22,6 +22,7 @@ class SimpleASRPipeline:
         config: ASRConfig,
         transcriber: Transcriber,
         *,
+        vad: Any | None = None,
         energy_threshold: float = DEFAULT_ENERGY_THRESHOLD,
         min_duration_ms: int = 400,
         silence_duration_ms: Optional[int] = None,
@@ -57,6 +58,7 @@ class SimpleASRPipeline:
         self._min_partial_window = max(0.1, config.frame_duration_ms / 1000)
         self._orchestrator = orchestrator
         self._telemetry = telemetry
+        self._vad = vad
 
     async def run(self, frames: AsyncIterator[bytes]) -> None:
         try:

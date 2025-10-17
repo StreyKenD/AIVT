@@ -48,6 +48,12 @@ async def run() -> None:
         await orchestrator.aclose()
 
 
+async def run_worker() -> None:
+    """Backward-compatible entry point for existing callers/tests."""
+
+    await run()
+
+
 def main() -> None:
     try:
         asyncio.run(run())
