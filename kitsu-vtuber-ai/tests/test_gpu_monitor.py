@@ -67,7 +67,7 @@ def test_gpu_monitor_collect_and_publish() -> None:
 
     asyncio.run(monitor.collect_once())
 
-    assert telemetry.events, "esperava pelo menos um evento de GPU"
+    assert telemetry.events, "expected at least one GPU event"
     event_type, payload = telemetry.events[0]
     assert event_type == "hardware.gpu"
     assert payload["name"] == "Mock GPU"
