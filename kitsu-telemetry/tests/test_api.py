@@ -209,6 +209,22 @@ def test_requires_api_key(telemetry_db):
     asyncio.run(_scenario())
 
 
+def test_repeated_requests_without_api_key(telemetry_db):
+    async def _scenario() -> None:
+        await storage.init_db(db_path=str(telemetry_db))
+        transport = ASGITransport(app=main.app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
+            first_response = await insecure_client.get("/events")
+            assert first_response.status_code == 401
+            assert first_response.json() == {"detail": "Invalid API key"}
+
+            second_response = await insecure_client.get("/events")
+            assert second_response.status_code == 401
+            assert second_response.json() == {"detail": "Invalid API key"}
+
+    asyncio.run(_scenario())
+
+
 def test_log_listing_endpoint(telemetry_db, tmp_path, monkeypatch):
     async def _scenario() -> None:
         monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path))
