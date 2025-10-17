@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-import asyncio
-from dataclasses import dataclass
 from typing import AsyncIterator, List, Tuple, cast
 
-from apps.asr_worker.main import ASRConfig, SpeechPipeline, TranscriptionResult
+from apps.asr_worker import ASRConfig, SpeechPipeline, TranscriptionResult
 
 
 class DummyTranscriber:
@@ -18,6 +16,11 @@ class DummyTranscriber:
         if self.calls == 1:
             return TranscriptionResult(text="hello", confidence=0.9, language="en")
         return TranscriptionResult(text="hello world", confidence=0.92, language="en")
+
+
+class SpanishTranscriber:
+    def transcribe(self, audio: bytes) -> TranscriptionResult:
+        return TranscriptionResult(text="hola mundo", confidence=0.85, language="es")
 
 
 class PatternVAD:
@@ -89,5 +92,45 @@ def test_pipeline_emits_partial_and_final_events() -> None:
         assert final_events[0]["text"] == "hello world"
         duration = cast(float, final_events[0]["duration_ms"])
         assert duration > 0
+
+    asyncio.run(_scenario())
+
+
+def test_pipeline_skips_non_english_events() -> None:
+    async def _scenario() -> None:
+        config = ASRConfig(
+            model_name="tiny.es",
+            orchestrator_url="http://localhost:8000",
+            sample_rate=16000,
+            frame_duration_ms=20,
+            partial_interval_ms=80,
+            silence_duration_ms=120,
+            vad_mode="webrtc",
+            vad_aggressiveness=2,
+            input_device=None,
+            fake_audio=False,
+            device_preference="cpu",
+            compute_type="int8",
+        )
+        frame = b"\x01\x00" * config.frame_samples
+        silence = b"\x00\x00" * config.frame_samples
+        frames = [frame] * 6 + [silence] * (config.silence_threshold_frames + 2)
+        vad = PatternVAD(
+            [True] * 6 + [False] * (config.silence_threshold_frames + 2),
+            config.frame_bytes,
+        )
+        recorder = Recorder(events=[])
+        pipeline = SpeechPipeline(
+            config=config,
+            vad=vad,
+            transcriber=SpanishTranscriber(),
+            orchestrator=recorder,
+        )
+
+        await pipeline.process(
+            iter_frames(frames, delay=config.frame_duration_ms / 1000)
+        )
+
+        assert recorder.events == [], "Expected no events for non-English segments"
 
     asyncio.run(_scenario())

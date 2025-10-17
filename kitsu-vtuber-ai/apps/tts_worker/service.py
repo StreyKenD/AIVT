@@ -241,8 +241,21 @@ class TTSService:
         logger.info("Fila TTS pronta (%d synthesizers)", len(self._synthesizers))
         while True:
             job = await self._queue.get()
+            logger.debug(
+                "Processando job TTS request_id=%s texto_len=%d voice=%s queue_depth=%d",
+                job.request_id,
+                len(job.text),
+                job.voice,
+                self._queue.qsize(),
+            )
             cached = self._cache.get(job.text, job.voice)
             if cached:
+                logger.info(
+                    "TTS cache hit request_id=%s voice=%s latency_ms=%.2f",
+                    job.request_id,
+                    cached.voice,
+                    cached.latency_ms,
+                )
                 job.future.set_result(cached)
                 await self._emit_metric(job, cached, cached=True)
                 self._queue.task_done()
@@ -295,7 +308,7 @@ class TTSService:
         try:
             await self._telemetry.publish("tts.completed", payload)
         except Exception as exc:  # pragma: no cover - telemetry guard
-            logger.debug("Failed to send TTS metric: %s", exc)
+            logger.warning("Failed to send TTS metric: %s", exc)
 
     async def _synthesize(self, job: TTSJob) -> TTSResult:
         audio_path, _ = self._cache.resolve(job.text, job.voice)
@@ -306,6 +319,12 @@ class TTSService:
                 path = await synthesizer.synthesize(job.text, job.voice, audio_path)
                 visemes = self._viseme_from_text(job.text)
                 voice_id = job.voice or self._detect_voice_name(synthesizer)
+                logger.info(
+                    "TTS gerado request_id=%s voice=%s synth=%s",
+                    job.request_id,
+                    voice_id,
+                    synthesizer.__class__.__name__,
+                )
                 return TTSResult(
                     audio_path=path,
                     visemes=visemes,

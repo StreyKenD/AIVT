@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import inspect
+import json
 import logging
 import os
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Literal
@@ -30,6 +33,18 @@ from libs.telemetry.gpu import GPUMonitor
 
 configure_json_logging("orchestrator")
 logger = logging.getLogger(__name__)
+
+_DEFAULT_POLICY_URL = (
+    f"http://{os.getenv('POLICY_HOST', '127.0.0.1')}:{os.getenv('POLICY_PORT', '8081')}"
+)
+POLICY_URL = os.getenv("POLICY_URL", _DEFAULT_POLICY_URL)
+POLICY_TIMEOUT_SECONDS = float(os.getenv("POLICY_TIMEOUT_SECONDS", "40"))
+TTS_API_URL = os.getenv("TTS_API_URL", "http://127.0.0.1:8070")
+TTS_TIMEOUT_SECONDS = float(os.getenv("TTS_TIMEOUT_SECONDS", "60"))
+_SPEECH_PATTERN = re.compile(r"<speech>(.*?)</speech>", re.IGNORECASE | re.DOTALL)
+
+_policy_client: Optional[httpx.AsyncClient] = None
+_tts_client: Optional[httpx.AsyncClient] = None
 
 
 @dataclass
@@ -428,6 +443,78 @@ class OrchestratorState:
         payload["summary_generated"] = summary_payload is not None
         return payload
 
+    def _mark_module_latency(self, module: str, latency_ms: float) -> None:
+        state = self.modules.get(module)
+        if state is None:
+            return
+        state.latency_ms = max(1.0, float(latency_ms))
+        state.last_updated = time.time()
+
+    async def handle_asr_final(self, payload: Dict[str, Any]) -> None:
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return
+        try:
+            await self._process_asr_final(text, payload)
+        except Exception:  # pragma: no cover - defensive guard
+            logger.exception("Failed to process ASR final payload")
+
+    async def _process_asr_final(self, text: str, payload: Dict[str, Any]) -> None:
+        await self.record_turn("user", text)
+        request_body = self._build_policy_request(text)
+        start = time.perf_counter()
+        final_payload = await _invoke_policy(request_body, self._broker)
+        latency_ms = (time.perf_counter() - start) * 1000
+        self._mark_module_latency("policy_worker", latency_ms)
+        if final_payload is None:
+            logger.warning("Policy worker returned no final payload for request")
+            return
+        await self._broker.publish({"type": "policy.final", "payload": final_payload})
+
+        speech_content = _extract_speech(final_payload.get("content", ""))
+        if not speech_content:
+            speech_content = (final_payload.get("content") or "").strip()
+        if not speech_content:
+            return
+
+        if self.tts_muted:
+            await self.record_turn("assistant", speech_content)
+            return
+
+        tts_start = time.perf_counter()
+        tts_result = await _invoke_tts(
+            speech_content,
+            final_payload.get("meta", {}).get("voice"),
+            final_payload.get("request_id"),
+        )
+        tts_latency_ms = (time.perf_counter() - tts_start) * 1000
+        self._mark_module_latency("tts_worker", tts_latency_ms)
+        if tts_result is not None:
+            await self._broker.publish({"type": "tts.generated", "payload": tts_result})
+        voice_hint = None
+        if isinstance(tts_result, dict):
+            voice_hint = tts_result.get("voice")
+        await self.record_tts(TTSRequest(text=speech_content, voice=voice_hint))
+
+    def _build_policy_request(self, text: str) -> Dict[str, Any]:
+        persona = self.persona.snapshot()
+        payload: Dict[str, Any] = {
+            "text": text,
+            "persona_style": persona["style"],
+            "chaos_level": persona["chaos_level"],
+            "energy": persona["energy"],
+            "family_friendly": persona["family_mode"],
+        }
+        if self.last_summary:
+            payload["memory_summary"] = self.last_summary.summary_text
+        recent_turns = [
+            {"role": turn.role, "content": turn.text}
+            for turn in self.memory.buffer.as_list()[-6:]
+        ]
+        if recent_turns:
+            payload["recent_turns"] = recent_turns
+        return payload
+
     async def update_scene(self, scene: str) -> Dict[str, Any]:
         async with self._lock:
             self.current_scene = scene
@@ -527,6 +614,73 @@ class OrchestratorState:
             await self._broker.publish(snapshot)
 
 
+async def _invoke_policy(
+    payload: Dict[str, Any], broker: EventBroker
+) -> Optional[Dict[str, Any]]:
+    if _policy_client is None:
+        logger.warning("Policy client is not initialised; skipping LLM request")
+        return None
+    final_event: Optional[Dict[str, Any]] = None
+    current_event: Optional[str] = None
+    try:
+        async with _policy_client.stream("POST", "/respond", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    current_event = None
+                    continue
+                if line.startswith("event:"):
+                    current_event = line.split(":", 1)[1].strip()
+                    continue
+                if line.startswith("data:"):
+                    data_line = line.split(":", 1)[1].strip()
+                    if not data_line:
+                        continue
+                    try:
+                        data = json.loads(data_line)
+                    except json.JSONDecodeError:
+                        logger.debug("Discarding non-JSON SSE chunk: %s", data_line)
+                        continue
+                    if current_event == "token":
+                        await broker.publish({"type": "policy.token", "payload": data})
+                    elif current_event == "final":
+                        final_event = data
+    except Exception:  # pragma: no cover - network guard
+        logger.exception("Policy worker request failed")
+        return None
+    return final_event
+
+
+async def _invoke_tts(
+    text: str, voice: Optional[str], request_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    if _tts_client is None:
+        logger.warning("TTS client is not initialised; skipping speech synthesis")
+        return None
+    payload: Dict[str, Any] = {"text": text}
+    if voice:
+        payload["voice"] = voice
+    if request_id:
+        payload["request_id"] = request_id
+    try:
+        response = await _tts_client.post("/speak", json=payload)
+        response.raise_for_status()
+        return response.json()
+    except Exception:  # pragma: no cover - network guard
+        logger.exception("TTS worker request failed")
+        return None
+
+
+def _extract_speech(content: Optional[str]) -> str:
+    if not content:
+        return ""
+    match = _SPEECH_PATTERN.search(content)
+    if not match:
+        return ""
+    value = html.unescape(match.group(1))
+    return value.strip()
+
+
 memory_controller = MemoryController()
 telemetry = TelemetryPublisher(
     os.getenv("TELEMETRY_API_URL"),
@@ -544,9 +698,20 @@ app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    global _policy_client, _tts_client
     restore_flag = os.getenv("RESTORE_CONTEXT", "false").lower() in {"1", "true", "yes"}
     restore_window = float(os.getenv("MEMORY_RESTORE_WINDOW_SECONDS", "7200"))
     await telemetry.startup()
+    if _policy_client is None:
+        _policy_client = httpx.AsyncClient(
+            base_url=POLICY_URL,
+            timeout=httpx.Timeout(POLICY_TIMEOUT_SECONDS),
+        )
+    if _tts_client is None:
+        _tts_client = httpx.AsyncClient(
+            base_url=TTS_API_URL,
+            timeout=httpx.Timeout(TTS_TIMEOUT_SECONDS),
+        )
     await state.startup(restore_flag, restore_window)
     state.start_background_tasks()
     await gpu_monitor.start()
@@ -554,9 +719,16 @@ async def on_startup() -> None:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    global _policy_client, _tts_client
     await state.shutdown()
     await telemetry.shutdown()
     await gpu_monitor.stop()
+    if _policy_client is not None:
+        await _policy_client.aclose()
+        _policy_client = None
+    if _tts_client is not None:
+        await _tts_client.aclose()
+        _tts_client = None
 
 
 async def get_state() -> OrchestratorState:
@@ -643,6 +815,8 @@ async def receive_asr_event(
         if metric is not None:
             module.latency_ms = max(1.0, float(metric))
         module.last_updated = time.time()
+    if event_type == "asr_final":
+        asyncio.create_task(orchestrator.handle_asr_final(body))
     return {"status": "accepted"}
 
 

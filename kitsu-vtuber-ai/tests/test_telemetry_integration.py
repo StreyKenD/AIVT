@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import json
 from typing import List, Tuple
 
 import pytest
@@ -47,11 +48,83 @@ def test_policy_generator_emits_metrics(monkeypatch) -> None:
     pytest.importorskip("fastapi", reason="policy worker depende de FastAPI")
 
     async def _scenario() -> None:
-        monkeypatch.setenv("POLICY_FORCE_MOCK", "1")
         module = importlib.import_module("apps.policy_worker.main")
         module = importlib.reload(module)
         telemetry = StubTelemetry()
         monkeypatch.setattr(module, "TELEMETRY", telemetry, raising=False)
+
+        lines = [
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "<speech>ola chat</speech>",
+                    },
+                    "done": False,
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "<mood>kawaii</mood>",
+                    },
+                    "done": False,
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "<actions>wave</actions>",
+                    },
+                    "done": False,
+                }
+            ),
+            json.dumps({"done": True, "total_duration": 1_000_000, "eval_count": 10}),
+        ]
+
+        class _StubStream:
+            def __init__(self, payload: List[str]) -> None:
+                self._payload = payload
+
+            async def __aenter__(self) -> "_StubStream":
+                return self
+
+            async def __aexit__(
+                self,
+                exc_type,
+                exc,
+                tb,
+            ) -> None:  # pragma: no cover - nothing to clean
+                return None
+
+            def raise_for_status(self) -> None:
+                return None
+
+            async def aiter_lines(self):
+                for item in self._payload:
+                    yield item
+
+        class _StubClient:
+            def __init__(self, **_: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "_StubClient":
+                return self
+
+            async def __aexit__(
+                self,
+                exc_type,
+                exc,
+                tb,
+            ) -> None:  # pragma: no cover - nothing to clean
+                return None
+
+            def stream(self, *_: object, **__: object) -> _StubStream:
+                return _StubStream(lines)
+
+        monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: _StubClient())
 
         payload = module.PolicyRequest(
             text="hello there",
@@ -70,7 +143,7 @@ def test_policy_generator_emits_metrics(monkeypatch) -> None:
         event_type, metric = telemetry.calls[0]
         assert event_type == "policy.response"
         assert metric["status"] == "ok"
-        assert metric["source"] == "mock"
+        assert metric["source"] == "ollama"
         assert metric["text_length"] == len(payload.text)
         assert metric["retries"] == 0
 

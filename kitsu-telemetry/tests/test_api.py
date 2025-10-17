@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -175,5 +176,65 @@ def test_requires_api_key(telemetry_db):
         async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
             response = await insecure_client.get("/events")
         assert response.status_code == 401
+
+    asyncio.run(_scenario())
+
+
+def test_log_listing_endpoint(telemetry_db, tmp_path, monkeypatch):
+    async def _scenario() -> None:
+        monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path))
+        await storage.init_db(db_path=str(telemetry_db))
+
+        log_file = tmp_path / "policy_worker.log"
+        now = datetime.now(timezone.utc)
+        lines = [
+            json.dumps(
+                {
+                    "ts": now.isoformat(),
+                    "service": "policy_worker",
+                    "level": "info",
+                    "message": "Policy warmup complete",
+                    "logger": "kitsu.policy",
+                }
+            ),
+            json.dumps(
+                {
+                    "ts": (now + timedelta(seconds=5)).isoformat(),
+                    "service": "policy_worker",
+                    "level": "error",
+                    "message": "Ollama request failed: timeout",
+                    "logger": "kitsu.policy",
+                    "extra": {"request_id": "abc123"},
+                }
+            ),
+        ]
+        log_file.write_text("\n".join(lines), encoding="utf-8")
+
+        transport = ASGITransport(app=main.app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver", headers=API_HEADERS
+        ) as async_client:
+            latest_response = await async_client.get(
+                "/logs", params={"service": "policy_worker", "limit": 5}
+            )
+            assert latest_response.status_code == 200
+            payload = latest_response.json()
+            assert len(payload) == 2
+            assert payload[0]["message"] == "Ollama request failed: timeout"
+            assert payload[0]["extra"] == {"request_id": "abc123"}
+
+            filter_response = await async_client.get(
+                "/logs",
+                params={
+                    "service": "policy_worker",
+                    "level": "info",
+                    "contains": "warmup",
+                    "order": "asc",
+                },
+            )
+            assert filter_response.status_code == 200
+            filtered = filter_response.json()
+            assert len(filtered) == 1
+            assert filtered[0]["message"] == "Policy warmup complete"
 
     asyncio.run(_scenario())

@@ -104,27 +104,7 @@ def _fake_client_factory(
     return _factory
 
 
-def test_policy_worker_mock_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "1")
-    module = _reload_policy_module()
-    with TestClient(module.app) as client:
-        with client.stream(
-            "POST",
-            "/respond",
-            json={"text": "Hello chat", "persona_style": "chaotic"},
-        ) as response:
-            events = _consume_sse(response)
-    assert events[0][0] == "start"
-    token_events = [payload["token"] for event, payload in events if event == "token"]
-    final_event = next(payload for event, payload in events if event == "final")
-    assert final_event["source"] == "mock"
-    assert "<speech>" in final_event["content"]
-    assert len(token_events) >= 1
-    assert final_event["content"].startswith("<speech>")
-
-
 def test_policy_worker_streams_from_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
     lines = [
@@ -168,8 +148,7 @@ def test_policy_worker_streams_from_ollama(monkeypatch: pytest.MonkeyPatch) -> N
     assert "persona" in final_payload["meta"]
 
 
-def test_policy_worker_retries_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
+def test_policy_worker_retries_and_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICY_RETRY_ATTEMPTS", "1")
     module = _reload_policy_module()
 
@@ -185,15 +164,17 @@ def test_policy_worker_retries_and_falls_back(monkeypatch: pytest.MonkeyPatch) -
     retry_events = [payload for event, payload in events if event == "retry"]
     assert len(retry_events) == 1
     final_payload = next(payload for event, payload in events if event == "final")
-    assert final_payload["source"] == "mock"
+    assert final_payload["source"] == "ollama"
+    assert final_payload["content"] == ""
     assert final_payload["meta"]["fallback"] is True
-    assert "reason" in final_payload["meta"]
+    assert final_payload["meta"]["status"] == "error"
+    assert "error" in final_payload["meta"]
+    assert final_payload["meta"]["retries"] == 2
 
 
 def test_policy_worker_blocks_prompt_via_moderation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
     def _fail_async_client(**_: object) -> None:
@@ -216,7 +197,6 @@ def test_policy_worker_blocks_prompt_via_moderation(
 def test_policy_worker_injects_memory_and_recent_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
     captured_payloads: List[dict[str, Any]] = []
@@ -279,7 +259,6 @@ def test_policy_worker_injects_memory_and_recent_turns(
 
 
 def test_policy_worker_sanitises_llm_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POLICY_FORCE_MOCK", "0")
     module = _reload_policy_module()
 
     lines = [

@@ -1,0 +1,406 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import ipaddress
+import logging
+import os
+import signal
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+import shutil
+import socket
+from urllib.parse import urlparse
+from typing import Callable, Dict, Iterable, List, Optional
+
+
+logger = logging.getLogger("kitsu.pipeline")
+
+
+@dataclass(slots=True)
+class ServiceSpec:
+    name: str
+    command: List[str]
+    restart: bool = True
+    restart_delay: float = 5.0
+    env_overrides: Dict[str, str] = field(default_factory=dict)
+    predicate: Optional[Callable[[], tuple[bool, Optional[str]]]] = None
+
+
+async def _pipe_stream(
+    service: str,
+    stream: asyncio.StreamReader | None,
+    level: int,
+) -> None:
+    if stream is None:
+        return
+    try:
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            logger.log(level, "[%s] %s", service, line.decode(errors="replace").rstrip())
+    except asyncio.CancelledError:  # pragma: no cover - shutdown path
+        pass
+
+
+async def _run_service(
+    spec: ServiceSpec,
+    base_env: Dict[str, str],
+    stop_event: asyncio.Event,
+) -> None:
+    if spec.predicate is not None:
+        try:
+            should_start, reason = spec.predicate()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Skipping %s: predicate failed (%s)", spec.name, exc)
+            return
+        if not should_start:
+            if reason:
+                logger.warning("Skipping %s: %s", spec.name, reason)
+            else:
+                logger.info("Skipping %s (predicate declined start)", spec.name)
+            return
+    attempt = 0
+    env = base_env.copy()
+    env.update(spec.env_overrides)
+
+    while not stop_event.is_set():
+        attempt += 1
+        logger.info("Starting %s (attempt %d)", spec.name, attempt)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *spec.command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            logger.debug(
+                "%s spawned pid=%s command=%s env_overrides=%s",
+                spec.name,
+                process.pid,
+                spec.command,
+                spec.env_overrides or {},
+            )
+        except FileNotFoundError as exc:  # pragma: no cover - configuration error
+            logger.error("Unable to start %s: %s", spec.name, exc)
+            return
+
+        stdout_task = asyncio.create_task(_pipe_stream(spec.name, process.stdout, logging.INFO))
+        stderr_task = asyncio.create_task(_pipe_stream(spec.name, process.stderr, logging.ERROR))
+        wait_process = asyncio.create_task(process.wait())
+        wait_stop = asyncio.create_task(stop_event.wait())
+
+        done, pending = await asyncio.wait(
+            {wait_process, wait_stop},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+        if stop_event.is_set():
+            logger.info("Stopping %s...", spec.name)
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=10.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                logger.warning("%s did not exit after terminate; killing", spec.name)
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                    await process.wait()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            break
+
+        returncode = process.returncode
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        logger.info("%s exited with code %s", spec.name, returncode)
+
+        if not spec.restart or returncode == 0:
+            break
+        logger.warning(
+            "%s crashed (code %s); restarting in %.1fs (next attempt %d)",
+            spec.name,
+            returncode,
+            spec.restart_delay,
+            attempt + 1,
+        )
+        await asyncio.sleep(spec.restart_delay)
+
+    # cancel the pipe readers if still running
+    for task in (stdout_task, stderr_task):
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+def _disabled_services() -> set[str]:
+    disabled = os.getenv("PIPELINE_DISABLE", "")
+    return {name.strip().lower() for name in disabled.split(",") if name.strip()}
+
+
+def _is_port_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _require_env(vars_needed: List[str]) -> tuple[bool, Optional[str]]:
+    missing = [name for name in vars_needed if not os.getenv(name)]
+    if missing:
+        return False, f"missing env vars: {', '.join(missing)}"
+    return True, None
+
+
+def _port_predicate(host: str, port: int) -> callable:
+    def _predicate() -> tuple[bool, Optional[str]]:
+        available = _is_port_available(host, port)
+        if not available:
+            return False, f"port {host}:{port} already in use"
+        return True, None
+
+    return _predicate
+
+
+def _ollama_reachability_predicate(ollama_url: str) -> Callable[[], tuple[bool, Optional[str]]]:
+    skip = os.getenv("PIPELINE_SKIP_OLLAMA_CHECK", "0").lower() in {"1", "true", "yes"}
+    if skip:
+        return lambda: (True, None)
+    parsed = urlparse(ollama_url)
+    scheme = parsed.scheme or "http"
+    host = parsed.hostname
+    if not host:
+        return lambda: (False, f"invalid OLLAMA_URL: {ollama_url}")
+    port = parsed.port or (443 if scheme == "https" else 80)
+
+    def _predicate() -> tuple[bool, Optional[str]]:
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                return True, None
+        except OSError as exc:
+            return False, f"ollama unreachable at {host}:{port} ({exc})"
+
+    return _predicate
+
+
+def _ollama_binary_predicate() -> Callable[[], tuple[bool, Optional[str]]]:
+    def _predicate() -> tuple[bool, Optional[str]]:
+        if shutil.which("ollama"):
+            return True, None
+        return False, "ollama executable not found in PATH"
+
+    return _predicate
+
+
+def _ollama_autostart_enabled() -> bool:
+    value = os.getenv("OLLAMA_AUTOSTART", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _ollama_host_port(ollama_url: str) -> tuple[str, int]:
+    parsed = urlparse(ollama_url)
+    host = parsed.hostname or "127.0.0.1"
+    if parsed.port is not None:
+        return host, parsed.port
+    return host, 11434
+
+
+def _is_local_host(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        normalized = host.lower()
+        return normalized in {"localhost"} or normalized.startswith("127.")
+
+
+def _combine_predicates(
+    predicates: Iterable[Callable[[], tuple[bool, Optional[str]]]]
+) -> Callable[[], tuple[bool, Optional[str]]]:
+    checks = list(predicates)
+
+    def _predicate() -> tuple[bool, Optional[str]]:
+        for check in checks:
+            ok, reason = check()
+            if not ok:
+                return ok, reason
+        return True, None
+
+    return _predicate
+
+
+def _service_specs(python: str) -> Iterable[ServiceSpec]:
+    orch_host = os.getenv("ORCH_HOST", "127.0.0.1")
+    orch_port = os.getenv("ORCH_PORT", "8000")
+    control_host = os.getenv("CONTROL_PANEL_HOST", "127.0.0.1")
+    control_port = os.getenv("CONTROL_PANEL_PORT", "8100")
+    policy_host = os.getenv("POLICY_HOST", "0.0.0.0")
+    policy_port = int(os.getenv("POLICY_PORT", "8081"))
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_host, ollama_port = _ollama_host_port(ollama_url)
+    ollama_autostart = _ollama_autostart_enabled()
+
+    specs: List[ServiceSpec] = []
+
+    if ollama_autostart:
+        if _is_local_host(ollama_host):
+            specs.append(
+                ServiceSpec(
+                    name="ollama",
+                    command=["ollama", "serve"],
+                    predicate=_combine_predicates(
+                        (
+                            _ollama_binary_predicate(),
+                            _port_predicate(ollama_host, ollama_port),
+                        )
+                    ),
+                    restart=True,
+                    restart_delay=5.0,
+                    env_overrides={
+                        "OLLAMA_HOST": ollama_host,
+                        "OLLAMA_PORT": str(ollama_port),
+                    },
+                )
+            )
+        else:
+            logger.info("Skipping Ollama autostart for non-local host %s", ollama_host)
+
+    policy_predicates: List[Callable[[], tuple[bool, Optional[str]]]] = [
+        _port_predicate(policy_host, policy_port)
+    ]
+    if not (ollama_autostart and _is_local_host(ollama_host)):
+        policy_predicates.append(_ollama_reachability_predicate(ollama_url))
+
+    specs.extend(
+        [
+            ServiceSpec(
+                name="orchestrator",
+                command=[
+                    python,
+                    "-m",
+                    "uvicorn",
+                    "apps.orchestrator.main:app",
+                    "--host",
+                    orch_host,
+                    "--port",
+                    orch_port,
+                ],
+                predicate=_port_predicate(orch_host, int(orch_port)),
+            ),
+            ServiceSpec(
+                name="control_panel",
+                command=[
+                    python,
+                    "-m",
+                    "uvicorn",
+                    "apps.control_panel_backend.main:app",
+                    "--host",
+                    control_host,
+                    "--port",
+                    control_port,
+                ],
+                predicate=_port_predicate(control_host, int(control_port)),
+            ),
+            ServiceSpec(
+                name="policy_worker",
+                command=[python, "-m", "apps.policy_worker.main"],
+                predicate=_combine_predicates(
+                    policy_predicates
+                ),
+            ),
+            ServiceSpec(
+                name="asr_worker",
+                command=[python, "-m", "apps.asr_worker.main"],
+            ),
+            ServiceSpec(name="tts_worker", command=[python, "-m", "apps.tts_worker.main"]),
+            ServiceSpec(
+                name="avatar_controller",
+                command=[python, "-m", "apps.avatar_controller.main"],
+                predicate=lambda: _require_env(["VTS_URL", "VTS_AUTH_TOKEN"]),
+            ),
+            ServiceSpec(
+                name="obs_controller",
+                command=[python, "-m", "apps.obs_controller.main"],
+                predicate=lambda: _require_env(["OBS_WS_URL", "OBS_WS_PASSWORD"]),
+            ),
+            ServiceSpec(
+                name="twitch_ingest",
+                command=[python, "-m", "apps.twitch_ingest.main"],
+                predicate=lambda: _require_env(["TWITCH_OAUTH_TOKEN", "TWITCH_CHANNEL"]),
+            ),
+        ]
+    )
+
+    return specs
+
+
+async def run_pipeline() -> None:
+    base_env = os.environ.copy()
+    log_root_value = base_env.get("KITSU_LOG_ROOT")
+    if log_root_value:
+        log_root_path = Path(log_root_value)
+    else:
+        log_root_path = Path("logs")
+    if not log_root_path.is_absolute():
+        log_root_path = (Path.cwd() / log_root_path).resolve()
+    base_env["KITSU_LOG_ROOT"] = str(log_root_path)
+
+    python = sys.executable
+    disabled = _disabled_services()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+            except NotImplementedError:  # pragma: no cover - Windows fallback
+                pass
+    except RuntimeError:
+        # In some embedded contexts signal handlers cannot be registered.
+        pass
+
+    specs = [spec for spec in _service_specs(python) if spec.name.lower() not in disabled]
+    if not specs:
+        logger.warning("No services selected; exiting.")
+        return
+
+    tasks = [
+        asyncio.create_task(_run_service(spec, base_env, stop_event), name=f"svc:{spec.name}")
+        for spec in specs
+    ]
+
+    logger.info("Pipeline runner started with services: %s", ", ".join(spec.name for spec in specs))
+
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for spec, result in zip(specs, results):
+            if isinstance(result, Exception):
+                logger.debug("Service %s finished with %r", spec.name, result)
+    finally:
+        stop_event.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("Pipeline runner stopped.")
+
+
+async def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    try:
+        await run_pipeline()
+    except KeyboardInterrupt:  # pragma: no cover - interactive use
+        logger.info("Pipeline interrupted by user")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

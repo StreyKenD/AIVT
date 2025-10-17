@@ -6,7 +6,7 @@ import contextlib
 from dataclasses import asdict, dataclass
 from typing import Iterable, List, Optional, Sequence
 
-from .main import load_module_if_available
+from .utils import load_module_if_available
 
 
 @dataclass
@@ -50,7 +50,7 @@ def _safe_query_sounddevice(sounddevice: object) -> Iterable[DeviceEntry]:
         entries.append(
             DeviceEntry(
                 backend="sounddevice",
-                identifier=str(device.get("name", index)),
+                identifier=str(index),
                 name=str(device.get("name", index)),
                 channels=channels,
                 host=host_label,

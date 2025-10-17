@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import json
 import logging
@@ -42,26 +43,16 @@ async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> No
         logger.debug("Failed to send policy metric: %s", exc)
 
 
-async def _response_preview(response: httpx.Response, limit: int = 256) -> str:
+async def _response_preview(response: httpx.Response, limit: int = 128) -> str:
     try:
         content = await response.aread()
     except Exception:
         return "<response body unavailable>"
     encoding = response.encoding or "utf-8"
-    if not content:
-        return "<empty response>"
-    try:
-        payload = json.loads(content)
-        if isinstance(payload, dict):
-            if "error" in payload and isinstance(payload["error"], str):
-                return payload["error"]
-            return json.dumps(payload, ensure_ascii=False)[:limit]
-    except json.JSONDecodeError:
-        pass
-    try:
-        return content[:limit].decode(encoding, errors="replace")
-    except Exception:
-        return content[:limit].decode("utf-8", errors="replace")
+    preview = content[:limit]
+    with contextlib.suppress(Exception):
+        return preview.decode(encoding, errors="replace")
+    return preview.decode("utf-8", errors="replace")
 
 
 SYSTEM_PROMPT_TEMPLATE = """
@@ -280,14 +271,8 @@ async def _stream_ollama_response(
                         final_metadata = chunk
                         break
     except httpx.HTTPStatusError as exc:
-        body_preview = await _response_preview(exc.response)
-        if "model not found" in body_preview.lower():
-            body_preview = (
-                f"{body_preview}. Install the model with `ollama pull {DEFAULT_MODEL}` "
-                "or update LLM_MODEL_NAME."
-            )
         raise OllamaStreamError(
-            f"Ollama HTTP {exc.response.status_code}: {body_preview}"
+            f"Ollama HTTP {exc.response.status_code}: {exc.response.text[:128]}"
         ) from exc
     except (httpx.RequestError, asyncio.TimeoutError) as exc:
         raise OllamaStreamError(f"Ollama request failed: {exc}") from exc
