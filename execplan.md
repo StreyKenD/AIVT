@@ -1,6 +1,6 @@
 # AIVT Execution Plan — Implementation Blueprint
 
-_Last updated: 13 Oct 2025_
+_Last updated: 15 Oct 2025_
 
 This plan converts the current repositories (`kitsu-vtuber-ai`, `kitsu-telemetry`) into a shippable, Windows-first VTuber stack that can power a two-hour live rehearsal without Docker. It reflects the code already committed and breaks the remaining work into verifiable deliverables.
 
@@ -44,42 +44,44 @@ Ownership: same solo maintainer for both repos; use GitHub Projects “MVP 0.1 �
 
 ---
 
-## 4. Baseline Snapshot (Oct 2025)
+## 4. Baseline Snapshot 
+(Oct 2025)
 ### Pipeline services (`kitsu-vtuber-ai`)
-- **Orchestrator (`apps/orchestrator`)**: FastAPI + WS broker running, module toggles, persona updates, `/tts`, `/obs/scene`, `/vts/expr`, `/events/asr` ingestion, telemetry publisher stubbed but wired. Requires real worker bridges and telemetry enablement.
-- **ASR worker (`apps/asr_worker`)**: faster-whisper integration ready with configurable VAD hooks, but lacks real audio source/VAD module wiring and Windows device detection. No streaming partials emitted yet.
-- **Policy worker (`apps/policy_worker`)**: SSE streaming scaffold with retry/backoff; still mocks Ollama responses and needs prompt/memory integration.
-- **TTS worker (`apps/tts_worker`)**: In-memory queue that writes silent WAV placeholders and fake visemes. Must be swapped for Coqui driver with Piper fallback and interruption support.
+- **Orchestrator (`apps/orchestrator`)**: FastAPI + WebSocket broker with module toggles, persona updates, scene/expression endpoints, and `/events/asr` ingestion. Telemetry publisher active (`TELEMETRY_API_URL`), structured JSON logging enabled.
+- **ASR worker (`apps/asr_worker`)**: Refactored into modular package (config/audio/vad/pipeline/telemetry). Emits partial + final transcripts with latency metrics. Real-device capture available via `ASR_INPUT_DEVICE`; defaults to fake audio only when explicitly set.
+- **Policy worker (`apps/policy_worker`)**: SSE streaming with retry/backoff against Ollama, moderation on tokens/finals, and explicit error events instead of canned fallbacks when the LLM output is invalid.
+- **TTS worker (`apps/tts_worker`)**: Queue + telemetry instrumentation. Synthetic voice still default; Coqui/Piper playback awaits `espeak-ng` install and model selection.
+- **Pipeline runner (`apps/pipeline_runner`)**: Supervisor launches orchestrator/control/policy/ASR/TTS (and optional OBS/VTS/Twitch), restarts crashes with backoff, streams logs, and verifies Ollama reachability before booting the policy worker (override via `PIPELINE_SKIP_OLLAMA_CHECK=1`). Integrations auto-skip when environment requirements are missing via `PIPELINE_DISABLE`.
 
 ### Integrations & aux services
-- **OBS controller (`apps/obs_controller`)**: event loop + stub logging; needs obsws-python wiring and scene/preset management.
-- **Avatar controller (`apps/avatar_controller`)**: VTube Studio stub prints expression updates; lacks actual WebSocket client and viseme mapping.
-- **Twitch ingest (`apps/twitch_ingest`)**: twitchio optional import with local stub cycling commands; missing OAuth, rate limiting, and orchestrator bridge.
-- **Control panel backend (`apps/control_panel_backend`)**: FastAPI skeleton for UI commands; requires persistence hooks, authentication, and telemetry alignment.
-- **Memory (`libs/memory`)**: Ring buffer + SQLite summary logic implemented; needs integration checkpoints in orchestrator endpoints and tests for restore flows.
+- **OBS controller (`apps/obs_controller`)**: Reconnect loop implemented; operates in dry mode until OBS WebSocket credentials provided.
+- **Avatar controller (`apps/avatar_controller`)**: WebSocket client present but requires live VTS endpoint/token; skipped otherwise.
+- **Twitch ingest (`apps/twitch_ingest`)**: twitchio bridge available; runner skips until OAuth/channel configured.
+- **Control panel backend (`apps/control_panel_backend`)**: FastAPI bridge between UI and orchestrator/telemetry; fully driven by pipeline runner.
+- **Memory (`libs/memory`)**: Ring buffer + SQLite summary logic integrated; restore path gated by `RESTORE_CONTEXT`.
 
 ### Tooling & operations
-- **Scripts (`scripts/run_*.ps1`)**: Start/stop/status scaffolds exist; need validation on Windows, logging, and env-guard rails.
-- **Tests**: Smoke tests for orchestrator, telemetry API/UI import; missing coverage for workers/integrations.
-- **CI**: GitHub Actions workflows exist but Linux-focused; Windows runners not configured.
+- **Automation**: `scripts/run_pipeline.ps1` is the primary entry point (start/stop/status). Legacy `run_all*.ps1` scripts retained for compatibility.
+- **Docs**: Root README, `kitsu-vtuber-ai/README.md`, `RUN_FIRST.md`, and `.env.example` updated with pipeline runner, audio selection, and TTS requirements.
+- **Tests**: ASR pipeline + telemetry integration covered. Additional coverage needed for policy/TTS/OBS/VTS/Twitch flows.
+- **CI**: Linux workflows active; Windows runner enablement remains open.
 
 ### Telemetry repo
-- **API (`kitsu-telemetry/api`)**: CRUD for events + CSV export stub; lacks auth, retention policy, and aggregated metrics endpoints.
-- **UI (`kitsu-telemetry/ui`)**: SvelteKit dev scaffold streaming mock WebSocket data; requires real orchestrator wiring, charts, and control buttons.
+- **API (`kitsu-telemetry/api`)**: Event ingestion working; auth/retention still TODO.
+- **UI (`kitsu-telemetry/ui`)**: SvelteKit dashboard consumes orchestrator/control panel endpoints; charts/controls need completion.
 
----
 
 ## 5. Implementation Workstreams
 Each workstream has a DRI (default: maintainer) and explicit exit criteria. Tasks track with checkboxes to surface progress.
 
 ### WS1 — Windows Runtime & Developer Experience
-- [x] Harden PowerShell scripts: validate process status, propagate exit codes, support per-service logs. _(Completed via updated `scripts/run_all_no_docker.ps1` and `scripts/service_manager.ps1` logging flow.)_
-- [x] Ship `.env.example` parity and docs for required binaries (`ffmpeg`, `libsndfile`, `portaudio`). _(Refreshed telemetry `.env.example` and documented Windows installation/validation steps in `RUN_FIRST.md` and `README.md`.)_
-- [x] Configure GitHub Actions on Windows: `poetry install`, `ruff`, `black --check`, `mypy`, `pytest -q` for both repos. _(Workflows land under `.github/workflows/windows-ci.yml` in each repo.)_
-- [x] Add pre-commit instructions to `RUN_FIRST.md`. _(Pre-commit setup documented in latest RUN_FIRST revision.)_
-- [x] Enforce `poetry lock` reproducibility across repos. _(CI runs `poetry lock --check` in both repositories and the docs instruct running the command locally.)_
-- [x] Emit structured (JSON) logs per service with daily rotation and a configurable directory via `KITSU_LOG_ROOT`, documenting the flow in README/RUN_FIRST. _(New utility `libs.common.configure_json_logging` covers every app.)_
-- [x] Acceptance: CI green on Windows runners; running `pwsh scripts/run_all_no_docker.ps1 -Action start` boots all services without manual edits. _(Covered by `tests/test_acceptance_criteria.py::test_windows_stack_scripts_cover_all_services`, ensuring script parity and execution logs.)_
+- [x] Harden Windows automation: validate process status, propagate exit codes, consolidate logs. _(Handled by `scripts/service_manager.ps1` and the new `scripts/run_pipeline.ps1` supervisor.)_
+- [x] Ship `.env.example` parity and docs for required binaries (`ffmpeg`, `libsndfile`, `portaudio`, `espeak-ng`). _(Reflected in README/RUN_FIRST and telemetry docs.)_
+- [x] Configure GitHub Actions on Windows: `poetry install`, `ruff`, `black --check`, `mypy`, `pytest -q` for both repos. _(Workflows live under `.github/workflows/windows-ci.yml` in each repo.)_
+- [x] Add pre-commit instructions to `RUN_FIRST.md`. _(Pre-commit setup documented in the latest revision.)_
+- [x] Enforce `poetry lock` reproducibility across repos. _(CI runs `poetry lock --check`; docs instruct running the command locally.)_
+- [x] Emit structured (JSON) logs per service with daily rotation and a configurable directory via `KITSU_LOG_ROOT`. _(Covered by `libs.common.configure_json_logging` and referenced in RUN_FIRST.)_
+- [x] Acceptance: CI green on Windows runners; running `powershell -ExecutionPolicy Bypass -File scripts/run_pipeline.ps1 start` boots all services without manual edits. _(Covered by `tests/test_acceptance_criteria.py::test_windows_stack_scripts_cover_all_services`, now targeting the pipeline supervisor.)_
 
 ### WS2 — Audio Pipeline Completion (ASR ↔ Policy ↔ TTS)
 - [x] Implement WebRTC-VAD (or Silero) integration for ASR frames; emit partials/finals via orchestrator `POST /events/asr`. _(Covered by async tests validating `asr_partial`/`asr_final` emissions and the configurable WebRTC VAD.)_

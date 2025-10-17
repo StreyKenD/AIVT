@@ -1,151 +1,167 @@
 # AIVT Local Development Guide
 
-The repository hosts two tightly coupled projects:
+This workspace contains two tightly coupled projects:
 
-- **`kitsu-vtuber-ai/`** – the VTuber AI control plane, orchestrator, and runtime workers.
-- **`kitsu-telemetry/`** – a FastAPI telemetry API with a SvelteKit dashboard that visualises metrics from the AI runtime.
+- **`kitsu-vtuber-ai/`** – the AI control-plane and runtime workers (ASR, policy, TTS, OBS/VTS/Twitch bridges).
+- **`kitsu-telemetry/`** – the telemetry API and dashboard.
 
-Follow the numbered steps below to run everything on your machine.
+The instructions below reflect the current tooling, including the unified pipeline runner.
 
-## 1. Install prerequisites
+---
 
-1. **Python toolchain**
-   - Install Python **3.11 or newer**.
-   - Install [Poetry](https://python-poetry.org/docs/#installation) for dependency management (`pipx install poetry` works well).
-2. **JavaScript toolchain**
-   - Install Node.js **18.x** (use [nvm](https://github.com/nvm-sh/nvm) or the installer for your OS).
-   - Install [pnpm](https://pnpm.io/installation) (`npm install -g pnpm`).
-3. **Multimedia dependencies** – install OBS Studio with the **OBS WebSocket v5** plug-in enabled, plus the system packages `ffmpeg`, `portaudio`, and `libsndfile` (package names vary by OS; e.g. `brew install ffmpeg portaudio libsndfile` on macOS, `sudo apt install ffmpeg portaudio19-dev libsndfile1` on Ubuntu).
-4. **Optional helpers** – Windows users can rely on the PowerShell scripts in `kitsu-vtuber-ai/scripts/` to start and stop worker processes.
+## 1. Prerequisites
 
-## 2. Clone the repository
+| Component | Purpose | Suggested install |
+| --- | --- | --- |
+| Python 3.11 + [Poetry](https://python-poetry.org/docs/) | Worker runtime & dependency management | `pipx install poetry` |
+| Node.js 18 + [pnpm](https://pnpm.io/) | *Optional – telemetry UI* | `npm install -g pnpm` |
+| OBS Studio (WebSocket v5) | Scenes + panic macros | Download from obsproject.com |
+| VTube Studio (optional) | Avatar control | Steam or official site |
+| `ffmpeg`, `portaudio`, `libsndfile` | Audio capture / playback | `brew install` / `apt install` / `choco install` |
+| `espeak-ng` | Required for real TTS output (Coqui/Piper phonemes) | `choco install espeak-ng` on Windows |
+
+GPU metrics are collected automatically when NVIDIA drivers and `pynvml` are present (already listed in `pyproject.toml`).
+
+---
+
+## 2. Clone & prepare env files
 
 ```bash
-# Pick a directory where you want the project to live
-cd ~/code
-
-# Clone and enter the workspace
 git clone https://github.com/<your-org>/AIVT.git
 cd AIVT
+
+cp kitsu-vtuber-ai/.env.example kitsu-vtuber-ai/.env
+# Optional – telemetry pieces
+cp kitsu-telemetry/.env.example kitsu-telemetry/.env
+cp kitsu-telemetry/ui/.env.example kitsu-telemetry/ui/.env.local
 ```
 
-## 3. Prepare environment files
+Fill in, at minimum:
 
-1. **Core AI service**
-   - Copy the template: `cp kitsu-vtuber-ai/.env.example kitsu-vtuber-ai/.env`.
-   - Review the file and fill in credentials:
-     - `OBS_WS_URL` / `OBS_WS_PASSWORD` – match your local OBS setup.
-     - `TWITCH_CHANNEL` and `TWITCH_OAUTH_TOKEN` if you plan to stream.
-     - `VTS_URL` and `VTS_AUTH_TOKEN` for VTube Studio integrations.
-     - Update `ORCH_HOST`, `CONTROL_PANEL_HOST`, etc. if you need to expose services on different interfaces.
-2. **Telemetry API**
-   - Copy the template: `cp kitsu-telemetry/.env.example kitsu-telemetry/.env`.
-   - Adjust `API_PORT` or `TELEMETRY_ALLOWED_ORIGINS` if the dashboard will run somewhere other than `http://localhost:5173`.
-3. **Telemetry UI**
-   - Copy the template: `cp kitsu-telemetry/ui/.env.example kitsu-telemetry/ui/.env.local`.
-   - Point the URLs to the orchestrator (`PUBLIC_ORCH_BASE_URL` / `PUBLIC_ORCH_WS_URL`) and control backend (`PUBLIC_CONTROL_BASE_URL`) you will start in later steps.
+- OBS: `OBS_WS_URL`, `OBS_WS_PASSWORD`
+- Twitch: `TWITCH_CHANNEL`, `TWITCH_OAUTH_TOKEN`
+- VTube Studio: `VTS_URL`, `VTS_AUTH_TOKEN`
+- Audio: set `ASR_INPUT_DEVICE` to the numeric ID printed by `poetry run python -m apps.asr_worker.devices`
+- Set `ASR_FAKE_AUDIO=0` to capture from your microphone (the runner defaults to the safe `1` unless overridden)
+- Optional: `PIPELINE_DISABLE` (comma-separated services to skip, e.g. `twitch_ingest,avatar_controller`)
 
-> Tip: keep all services on `127.0.0.1` during local development to avoid CORS headaches.
+Keep everything on `127.0.0.1` unless you truly need remote access.
 
-## 4. Install dependencies
+---
 
-Perform these installs from the repository root.
+## 3. Install dependencies
 
 ```bash
-# Install Python dependencies for both projects (this creates .venv environments)
+# Core runtime
 cd kitsu-vtuber-ai
 poetry install
-cd ..
 
-cd kitsu-telemetry
+# Telemetry (optional)
+cd ../kitsu-telemetry
 poetry install
-cd ..
-
-# Install frontend dependencies for the telemetry dashboard
-cd kitsu-telemetry/ui
-pnpm install
-cd ../../
+pnpm install --prefix ui
 ```
 
-## 5. Start the core VTuber AI services
+---
 
-Open **two terminals** (or tabs) and run the following from the project root:
+## 4. Run the whole stack (recommended)
 
-1. **Control Panel Backend** – handles configuration and acts as the main API for the UI.
-   ```bash
-   cd kitsu-vtuber-ai
-   poetry run uvicorn apps.control_panel_backend.main:app --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
-   ```
+We ship a supervisor that launches every worker, restarts crashes, and pipes logs.
 
-   PowerShell (Windows) — use PowerShell environment variables and explicit defaults:
+### Windows (PowerShell)
 
-   ```powershell
-   cd .\kitsu-vtuber-ai
-   $host = $env:CONTROL_PANEL_HOST -or '127.0.0.1'
-   $port = [int]($env:CONTROL_PANEL_PORT -as [int] ?? 8100)
-   poetry run uvicorn apps.control_panel_backend.main:app --reload --host $host --port $port
-   ```
-2. **Orchestrator (HTTP + WebSocket)** – coordinates workers and real-time events.
-   ```bash
-   cd kitsu-vtuber-ai
-   poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
-   ```
+```powershell
+cd .\kitsu-vtuber-ai
+powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1 start
+```
 
-   PowerShell (Windows):
+- `stop` and `status` actions are also supported.
+- Logs stream to the console and are written under `logs/`.
 
-   ```powershell
-   cd .\kitsu-vtuber-ai
-   $host = $env:ORCH_HOST -or '127.0.0.1'
-   $port = [int]($env:ORCH_PORT -as [int] ?? 8000)
-   poetry run uvicorn apps.orchestrator.main:app --reload --host $host --port $port
-   ```
+> VS Code tip: run `Terminal -> Run Task -> pipeline:start` to spin up the supervisor inside the integrated terminal. Use the paired `pipeline:status` / `pipeline:stop` tasks to inspect or tear it down, and reach for `telemetry:api` or `telemetry:ui` only when you want the optional dashboard pieces.
 
-Verify the orchestrator is healthy from another terminal:
+### Cross-platform (inside Poetry)
 
 ```bash
-curl http://127.0.0.1:8000/status
+cd kitsu-vtuber-ai
+poetry run python -m apps.pipeline_runner.main
 ```
 
-You should receive a JSON payload indicating the orchestrator is online.
+#### Useful environment overrides
 
-## 6. Start the telemetry stack
+| Variable | Effect |
+| --- | --- |
+| `PIPELINE_DISABLE=twitch_ingest,avatar_controller` | Skip specific services |
+| `ASR_INPUT_DEVICE=32` | Pick the PortAudio device index detected by the listing command |
+| `ASR_FAKE_AUDIO=1` | Force silent (fake) audio |
+| `TTS_DISABLE_COQUI=1` or `TTS_DISABLE_PIPER=1` | Force a single TTS backend for debugging |
 
-Use two additional terminals for the telemetry backend and frontend:
+Services log their status on startup; missing env vars are reported and the runner continues instead of crashing.
 
-1. **Telemetry API (FastAPI)**
-    ```bash
-    cd kitsu-telemetry
-    poetry run uvicorn api.main:app \
-       --reload --host ${API_HOST:-127.0.0.1} --port ${API_PORT:-8001}
-    ```
+---
 
-    PowerShell (Windows):
+## 5. Manual commands (if you prefer individual shells)
 
-    ```powershell
-    cd .\kitsu-telemetry
-    $host = $env:API_HOST -or '127.0.0.1'
-    $port = [int]($env:API_PORT -as [int] ?? 8001)
-    poetry run uvicorn api.main:app --reload --host $host --port $port
-    ```
-   - If you set `TELEMETRY_API_KEY` in `.env`, include the header `X-API-KEY: <your key>` on client requests.
+```bash
+poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+poetry run uvicorn apps.control_panel_backend.main:app --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
+poetry run python -m apps.asr_worker.main
+poetry run python -m apps.policy_worker.main
+poetry run python -m apps.tts_worker.main
+```
 
-2. **Telemetry Dashboard (SvelteKit + pnpm)**
-   ```bash
-   cd kitsu-telemetry/ui
-   pnpm dev -- --host 127.0.0.1 --port 5173
-   ```
-   - Visit `http://127.0.0.1:5173` in your browser. The dashboard consumes the orchestrator and control panel endpoints you configured earlier and opens a WebSocket stream using `PUBLIC_ORCH_WS_URL`.
+This was the old workflow; the pipeline runner simply does the above for you with supervision and restart logic.
 
-## 7. Optional workers & helpers
+---
 
-- Power users can launch additional workers (e.g., ASR, TTS, safety) via the scripts under `kitsu-vtuber-ai/scripts/` once the orchestrator is running.
-- On Windows, run `scripts/run_all.ps1` to start every service without Docker. Use the matching `stop_all` script to shut them down.
+## 6. Verify functionality
 
-## 8. Troubleshooting checklist
+Run the key test suites:
 
-- **CORS errors** – ensure `ORCH_CORS_ALLOW_ORIGINS` (orchestrator) and `TELEMETRY_ALLOWED_ORIGINS` (API) include the telemetry UI URL.
-- **WebSocket connection refused** – confirm OBS/VTube Studio endpoints match the host/port in `.env` and that the orchestrator is listening on the same interface your browser targets.
-- **Audio device issues** – set `ASR_INPUT_DEVICE` to the correct PortAudio device ID (`poetry run python scripts/list_audio_devices.py`).
-- **Missing dependencies** – re-run `poetry install` or `pnpm install` if you update `pyproject.toml` or `package.json`.
+```bash
+poetry run pytest tests/test_asr_worker.py tests/test_asr_pipeline.py tests/test_telemetry_integration.py
+```
 
-With all four services running, you have the full local development environment: the AI orchestration core, the control panel backend, the telemetry API, and the telemetry dashboard.
+These cover the ASR segmentation/transcription path plus TTS telemetry instrumentation.
+
+---
+
+## 7. Telemetry dashboard (optional)
+
+```bash
+# API
+cd kitsu-telemetry
+poetry run uvicorn api.main:app --reload --host ${API_HOST:-127.0.0.1} --port ${API_PORT:-8001}
+
+# UI
+cd ui
+pnpm dev -- --host 127.0.0.1 --port 5173
+```
+
+Set `PUBLIC_ORCH_BASE_URL`, `PUBLIC_ORCH_WS_URL`, and `PUBLIC_CONTROL_BASE_URL` in `ui/.env.local` to reference `http://127.0.0.1:8000` and `http://127.0.0.1:8100`.
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `port already in use` on orchestrator/control/policy | Stop old processes (`scripts/run_pipeline.ps1 stop`) or change the ports in `.env` |
+| TTS warning: “No espeak backend found” | Install `espeak-ng` (or keep running in synthetic mode) |
+| ASR keeps using silence | Set `ASR_FAKE_AUDIO=0` and `ASR_INPUT_DEVICE=<numeric id>`; confirm in logs that `sounddevice` is in use |
+| OBS/VTS/Twitch skipped | Add the required env vars or list the services in `PIPELINE_DISABLE` |
+| GPU metrics disabled | Install NVIDIA drivers or ignore (the runner auto-disables telemetry when unavailable) |
+
+---
+
+## 9. Repository structure
+
+```
+AIVT/
+├── kitsu-vtuber-ai/          # core runtime (this guide)
+├── kitsu-telemetry/          # telemetry API + UI
+├── licenses/                 # third-party notices
+└── README.md (you are here)
+```
+
+For more details, including licensing requirements and the operations playbook, read `kitsu-vtuber-ai/README.md` and `kitsu-vtuber-ai/RUN_FIRST.md`.

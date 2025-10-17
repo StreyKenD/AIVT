@@ -63,7 +63,7 @@ def test_soak_harness_collects_summary() -> None:
         "event: start\n"
         "data: {}\n\n"
         "event: final\n"
-        'data: {"content": "<speech>hello</speech><mood>kawaii</mood>", "latency_ms": 42.0, "source": "mock"}\n\n'
+        'data: {"content": "<speech>hello</speech><mood>kawaii</mood>", "latency_ms": 42.0, "source": "ollama"}\n\n'
     )
 
     def policy_handler(request: httpx.Request) -> httpx.Response:

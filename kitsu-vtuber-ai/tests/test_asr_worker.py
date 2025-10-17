@@ -7,14 +7,14 @@ from typing import Iterable, List
 
 import pytest
 
-import apps.asr_worker.main as asr_main
-from apps.asr_worker.devices import gather_devices
-from apps.asr_worker.main import (
+import apps.asr_worker.runner as asr_runner
+from apps.asr_worker import (
     ASRConfig,
     SpeechPipeline,
     Transcriber,
     VoiceActivityDetector,
 )
+from apps.asr_worker.devices import gather_devices
 
 
 class _StubVAD(VoiceActivityDetector):
@@ -64,12 +64,71 @@ def test_speech_pipeline_emits_partial_and_final(
             compute_type=None,
         )
 
+        telemetry_calls: dict[str, list[dict]] = {"partial": [], "final": [], "skipped": []}
+
+        class _TelemetryStub:
+            async def segment_partial(
+                self,
+                *,
+                segment: int,
+                latency_ms: float,
+                text: str,
+                confidence,
+                language,
+            ) -> None:
+                telemetry_calls["partial"].append(
+                    {
+                        "segment": segment,
+                        "latency_ms": latency_ms,
+                        "text_length": len(text),
+                        "confidence": confidence,
+                        "language": language,
+                    }
+                )
+
+            async def segment_final(
+                self,
+                *,
+                segment: int,
+                duration_ms: float,
+                confidence,
+                language,
+                text: str,
+            ) -> None:
+                telemetry_calls["final"].append(
+                    {
+                        "segment": segment,
+                        "duration_ms": duration_ms,
+                        "text_length": len(text),
+                        "confidence": confidence,
+                        "language": language,
+                    }
+                )
+
+            async def segment_skipped(
+                self,
+                *,
+                segment: int,
+                reason: str,
+                language,
+                text_length: int,
+            ) -> None:
+                telemetry_calls["skipped"].append(
+                    {
+                        "segment": segment,
+                        "reason": reason,
+                        "language": language,
+                        "text_length": text_length,
+                    }
+                )
+
         orchestrator = _RecordingOrchestrator()
         pipeline = SpeechPipeline(
             config=config,
             vad=_StubVAD(config.frame_bytes),
             transcriber=_StubTranscriber(),
             orchestrator=orchestrator,  # type: ignore[arg-type]
+            telemetry=_TelemetryStub(),  # type: ignore[arg-type]
         )
 
         loop = asyncio.get_running_loop()
@@ -102,6 +161,80 @@ def test_speech_pipeline_emits_partial_and_final(
         )
         assert final_event["text"] == "hello-final"
         assert final_event["duration_ms"] > 0
+        assert telemetry_calls["partial"]
+        assert telemetry_calls["final"]
+        assert not telemetry_calls["skipped"]
+
+    asyncio.run(_scenario())
+
+
+def test_speech_pipeline_skips_non_english_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _scenario() -> None:
+        config = ASRConfig(
+            model_name="tiny",
+            orchestrator_url="http://localhost:8000",
+            sample_rate=16000,
+            frame_duration_ms=20,
+            partial_interval_ms=50,
+            silence_duration_ms=120,
+            vad_mode="webrtc",
+            vad_aggressiveness=2,
+            input_device=None,
+            fake_audio=False,
+            device_preference="cpu",
+            compute_type=None,
+        )
+
+        telemetry_calls: dict[str, list[dict]] = {"partial": [], "final": [], "skipped": []}
+
+        class _TelemetryStub:
+            async def segment_partial(self, **_kwargs) -> None:
+                telemetry_calls["partial"].append(_kwargs)
+
+            async def segment_final(self, **_kwargs) -> None:
+                telemetry_calls["final"].append(_kwargs)
+
+            async def segment_skipped(self, **kwargs) -> None:
+                telemetry_calls["skipped"].append(kwargs)
+
+        class _SpanishTranscriber(Transcriber):
+            def transcribe(self, audio: bytes):  # type: ignore[override]
+                return SimpleNamespace(text="hola", confidence=0.8, language="es")
+
+        orchestrator = _RecordingOrchestrator()
+        pipeline = SpeechPipeline(
+            config=config,
+            vad=_StubVAD(config.frame_bytes),
+            transcriber=_SpanishTranscriber(),
+            orchestrator=orchestrator,  # type: ignore[arg-type]
+            telemetry=_TelemetryStub(),  # type: ignore[arg-type]
+        )
+
+        loop = asyncio.get_running_loop()
+
+        async def _immediate_executor(_executor, func, *args):
+            return func(*args)
+
+        monkeypatch.setattr(loop, "run_in_executor", _immediate_executor)  # type: ignore[arg-type]
+
+        async def _frames():
+            speech = bytes([1]) + b"\x00" * (config.frame_bytes - 1)
+            silence = b"\x00" * config.frame_bytes
+            for _ in range(3):
+                await asyncio.sleep(0.02)
+                yield speech
+            for _ in range(config.silence_threshold_frames + 1):
+                await asyncio.sleep(0.02)
+                yield silence
+
+        await pipeline.process(_frames())
+
+        assert not orchestrator.events, "Non-English segments should not reach orchestrator"
+        assert not telemetry_calls["partial"]
+        assert not telemetry_calls["final"]
+        assert telemetry_calls["skipped"]
 
     asyncio.run(_scenario())
 
@@ -208,9 +341,37 @@ def test_run_worker_retries_after_pipeline_cancellation(
             async def aclose(self) -> None:
                 self.closed = True
 
-        monkeypatch.setattr(asr_main, "OrchestratorClient", _StubOrchestrator)
-        monkeypatch.setattr(asr_main, "build_transcriber", lambda _cfg: object())
-        monkeypatch.setattr(asr_main, "build_vad", lambda _cfg: object())
+        telemetry_records: dict[str, list[tuple[int, str]]] = {
+            "started": [],
+            "completed": [],
+        }
+
+        class _TelemetryStub:
+            async def aclose(self) -> None:
+                return None
+
+            async def cycle_started(
+                self, attempt: int, backoff_seconds: float
+            ) -> None:
+                telemetry_records["started"].append(
+                    (attempt, f"{backoff_seconds:.1f}")
+                )
+
+            async def cycle_completed(
+                self, attempt: int, outcome: str, *, detail: str | None = None
+            ) -> None:
+                telemetry_records["completed"].append((attempt, outcome))
+
+            async def segment_partial(self, **_kwargs) -> None:
+                return None
+
+            async def segment_final(self, **_kwargs) -> None:
+                return None
+
+        monkeypatch.setattr(asr_runner, "OrchestratorClient", _StubOrchestrator)
+        monkeypatch.setattr(asr_runner, "build_transcriber", lambda _cfg: object())
+        monkeypatch.setattr(asr_runner, "build_vad", lambda _cfg: object())
+        monkeypatch.setattr(asr_runner, "create_telemetry", lambda: _TelemetryStub())
 
         @contextlib.asynccontextmanager
         async def _fake_audio_source(_cfg: ASRConfig):
@@ -225,7 +386,7 @@ def test_run_worker_retries_after_pipeline_cancellation(
 
             yield _Source()
 
-        monkeypatch.setattr(asr_main, "acquire_audio_source", _fake_audio_source)
+        monkeypatch.setattr(asr_runner, "acquire_audio_source", _fake_audio_source)
 
         class _StubPipeline:
             def __init__(
@@ -235,6 +396,7 @@ def test_run_worker_retries_after_pipeline_cancellation(
                 vad: object,
                 transcriber: object,
                 orchestrator: object,
+                telemetry: object,
             ) -> None:
                 self._config = config
                 self._orchestrator = orchestrator
@@ -247,13 +409,15 @@ def test_run_worker_retries_after_pipeline_cancellation(
                 resumed.set()
                 await asyncio.sleep(0)
 
-        monkeypatch.setattr(asr_main, "SpeechPipeline", _StubPipeline)
+        monkeypatch.setattr(asr_runner, "SpeechPipeline", _StubPipeline)
 
-        worker_task = asyncio.create_task(asr_main.run_worker(config))
+        worker_task = asyncio.create_task(asr_runner.run_worker(config))
         await asyncio.wait_for(resumed.wait(), timeout=2.5)
         worker_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await worker_task
         assert attempts >= 2
+        assert telemetry_records["started"]
+        assert telemetry_records["completed"]
 
     asyncio.run(_scenario())

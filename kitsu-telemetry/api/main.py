@@ -1,6 +1,7 @@
 """FastAPI application responsible for telemetry."""
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -12,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, validator
 
 from . import storage
+from .log_reader import LogReaderError, query_logs
 
 _DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173"
 _API_KEY = os.getenv("TELEMETRY_API_KEY")
@@ -66,6 +68,17 @@ class TelemetryOut(BaseModel):
     @classmethod
     def from_storage(cls, event: storage.TelemetryEvent) -> "TelemetryOut":
         return cls(type=event.type, ts=event.ts, payload=event.payload)
+
+
+class LogEntryOut(BaseModel):
+    ts: str = Field(..., description="Event timestamp in ISO-8601 format")
+    service: str = Field(..., description="Service emitting the log line")
+    level: str = Field(..., description="Log level")
+    message: str = Field(..., description="Log message")
+    logger: str | None = Field(None, description="Logger name")
+    extra: dict[str, Any] | None = Field(None, description="Structured extras")
+    exception: str | None = Field(None, description="Exception information, if present")
+    file: str = Field(..., description="Log file relative path")
 
 
 async def _require_api_key(x_api_key: str | None = Header(None)) -> None:
@@ -198,6 +211,46 @@ async def latest_metrics(
     _: None = Depends(_require_api_key),
 ) -> dict[str, Any]:
     return await storage.latest_metrics(window_seconds=window_seconds)
+
+
+@app.get("/logs", response_model=list[LogEntryOut])
+async def list_logs(
+    *,
+    service: str | None = Query(None, description="Filter by service name"),
+    level: str | None = Query(None, description="Filter by log level"),
+    since: datetime | None = Query(None, description="Only entries newer than this timestamp"),
+    contains: str | None = Query(None, description="Substring search across message and extras"),
+    order: str = Query("desc", regex="^(?i)(asc|desc)$", description="Sort order: asc or desc"),
+    limit: int = Query(200, ge=1, le=1000, description="Maximum number of log entries"),
+    _: None = Depends(_require_api_key),
+) -> list[LogEntryOut]:
+    direction = order.lower()
+    try:
+        records = await asyncio.to_thread(
+            query_logs,
+            service=service,
+            level=level,
+            since=since,
+            contains=contains,
+            limit=limit,
+            order=direction,
+        )
+    except LogReaderError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return [
+        LogEntryOut(
+            ts=record.ts.isoformat(),
+            service=record.service,
+            level=record.level,
+            message=record.message,
+            logger=record.logger,
+            extra=record.extra,
+            exception=record.exception,
+            file=record.source_file,
+        )
+        for record in records
+    ]
 
 
 @app.post("/maintenance/prune", response_model=dict[str, Any])

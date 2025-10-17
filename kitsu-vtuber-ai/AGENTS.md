@@ -1,46 +1,45 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 ## Purpose
-This repository is part of the Kitsu.exe project (VTuber AI). Follow these contracts when proposing changes.
+This repository powers the Kitsu.exe VTuber AI runtime. Follow the conventions below when proposing changes so agents stay aligned.
 
 ## How to run (MVP)
-- Python 3.11+
-- Install deps: `poetry install` (or `pip install -r requirements.txt`)
-- Configure `.env` from `.env.example`
-- Dev:
-  - Orchestrator/Backend: `uvicorn apps.control_panel_backend.main:app --reload`
-  - (Repo B) Telemetry API: `uvicorn api.main:app --reload`
-  - (Repo B) SvelteKit UI: `pnpm i && pnpm dev`
+1. Python 3.11 + Poetry installed.
+2. Install deps: `poetry install`.
+3. Configure `.env` from `.env.example` (set `ASR_INPUT_DEVICE` via `poetry run python -m apps.asr_worker.devices`).
+4. Launch everything with one command:
+   - Windows: `powershell -ExecutionPolicy Bypass -File scripts/run_pipeline.ps1 start`
+   - Cross-platform: `poetry run python -m apps.pipeline_runner.main`
+   - Services can be skipped with `PIPELINE_DISABLE` (e.g. `twitch_ingest,avatar_controller`).
+5. Install `espeak-ng` if you expect real TTS audio; without it the worker stays in synthetic mode.
 
 ## Runtime dependencies
-- OBS Studio with the **OBS WebSocket v5** plugin enabled (`obsws-python` pinned to `1.7.2`).
-- External audio/video binaries: `ffmpeg`, `portaudio`, `libsndfile`.
-- Python 3.11+ and Poetry for isolated environments; keep the version documented in the README.
+- OBS Studio with the **OBS WebSocket v5** plugin (`obsws-python` compatible).
+- VTube Studio (optional) for avatar expressions.
+- `ffmpeg`, `portaudio`, `libsndfile`, and `espeak-ng` on the host.
+- Ollama running Llama 3 8B (or the configured fallback model) for policy responses.
 
 ## Quality
-- Lint/format: `ruff . && black --check .`
-- Types: `mypy` (permissive level)
-- Tests: `pytest -q` (goal: pass 100% of the smoke tests)
-- Commits: Conventional (`feat:`, `fix:`, `chore:`…)
+- Lint/format: `poetry run ruff . && poetry run black --check .`
+- Types: `poetry run mypy`
+- Tests: `poetry run pytest tests/test_asr_worker.py tests/test_asr_pipeline.py tests/test_telemetry_integration.py`
+- Keep docs in sync (`README.md`, `RUN_FIRST.md`, `.env.example`) when behaviour changes.
 
-## Style and restrictions
-- Asynchronous by default (FastAPI/httpx/websockets).
-- Do not add heavy libraries without justification.
-- No unnecessary `any` in new code (TS/pytypes).
-- TTS: **Coqui-TTS** with a permissive model (non-XTTS) – keep the model card in `licenses/third_party/`.
-- LLM: **Ollama** with **Llama 3 8B** (attribution required in the README).
+## Style & restrictions
+- Prefer asynchronous patterns (FastAPI/httpx/websockets) and avoid blocking calls.
+- Do not add heavyweight dependencies without agreement.
+- Keep audio code injectable so fake audio remains an option for CI.
+- TTS: continue targeting Coqui/Piper with permissive voices and document licences in `licenses/third_party/`.
+- LLM: default to Ollama + Llama 3 8B (note attribution in the README).
 
-## Safety/Moderation
-- “Family mode” ON by default.
-- Blocklists/regex in `configs/safety/`.
-- Filter profanity and TOS content; provide a friendly fallback.
+## Safety & moderation
+- Family-friendly defaults stay enabled.
+- Keep blocklists/regex in `configs/safety/`; moderation pipeline must return a friendly fallback when content is rejected.
 
 ## Memory
-- Short-term: ring buffer (last N messages).
-- Persistent: SQLite summaries; restore on boot when `RESTORE_CONTEXT=true`.
+- Short-term ring buffer, long-term SQLite summaries. Respect the `RESTORE_CONTEXT` flag for restores.
 
 ## PR acceptance criteria
-- Build and tests pass.
-- Lint/format OK.
-- PR is small, clearly described, and checklist updated.
-- Update `RUN_FIRST.md` if you change endpoints.
+- CI/tests/lint pass.
+- Change is scoped, well described, and docs updated when relevant.
+- `.env.example`, README, RUN_FIRST, and scripts stay in sync with runtime expectations.
