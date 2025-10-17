@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Dict, Optional
 
 from .config import ASRConfig
 from .logger import logger
 from .metrics import ASRTelemetry
 from .orchestrator import OrchestratorPublisher
 from .transcription import Transcriber
+from .vad import VoiceActivityDetector
 
 DEFAULT_ENERGY_THRESHOLD = float(
     os.getenv("ASR_ENERGY_THRESHOLD", "300.0")
@@ -22,9 +23,9 @@ class SimpleASRPipeline:
         config: ASRConfig,
         transcriber: Transcriber,
         *,
-        vad: Any | None = None,
+        vad: VoiceActivityDetector | None = None,
         energy_threshold: float = DEFAULT_ENERGY_THRESHOLD,
-        min_duration_ms: int = 400,
+        min_duration_ms: int = 0,
         silence_duration_ms: Optional[int] = None,
         allow_non_english: bool | None = None,
         orchestrator: OrchestratorPublisher | None = None,
@@ -40,17 +41,20 @@ class SimpleASRPipeline:
         self._last_partial_at = 0.0
         self._last_partial_text = ""
         self._energy_threshold = energy_threshold
-        self._min_duration = max(min_duration_ms, config.frame_duration_ms)
-        self._silence_required = (
-            (silence_duration_ms or config.silence_duration_ms)
-            // config.frame_duration_ms
+        self._min_duration = max(0, min_duration_ms)
+        silence_ms = silence_duration_ms or config.silence_duration_ms
+        self._silence_required = max(
+            1,
+            int(
+                (silence_ms + config.frame_duration_ms - 1)
+                // config.frame_duration_ms
+            ),
         )
-        self._silence_required = max(1, self._silence_required)
-        env_flag = os.getenv("ASR_ALLOW_NON_ENGLISH")
+        env_flag = os.getenv("ASR_ALLOW_NON_ENGLISH", "0")
         self._allow_non_english = (
             allow_non_english
             if allow_non_english is not None
-            else (env_flag or "1").lower() in {"1", "true", "yes"}
+            else env_flag.lower() in {"1", "true", "yes"}
         )
         if self._allow_non_english:
             logger.debug("ASR pipeline allowing all languages for transcripts")
@@ -66,7 +70,14 @@ class SimpleASRPipeline:
                 await self._handle_frame(frame)
         except asyncio.CancelledError:
             raise
-        logger.warning("Audio frame stream finished; waiting for next capture cycle")
+        else:
+            await self._flush_active_segment()
+            logger.warning("Audio frame stream finished; waiting for next capture cycle")
+
+    async def process(self, frames: AsyncIterator[bytes]) -> None:
+        """Backward-compatible alias for legacy callers/tests."""
+
+        await self.run(frames)
 
     async def _handle_frame(self, frame: bytes) -> None:
         if len(frame) != self._config.frame_bytes:
@@ -106,11 +117,7 @@ class SimpleASRPipeline:
         if self._silence_frames < self._silence_required:
             return
         await self._emit_segment()
-        self._buffer.clear()
-        self._speech_active = False
-        self._silence_frames = 0
-        self._last_partial_text = ""
-        self._last_partial_at = 0.0
+        self._reset_segment_state()
 
     async def _emit_segment(self) -> None:
         if not self._buffer:
@@ -272,11 +279,32 @@ class SimpleASRPipeline:
             logger.debug("Telemetry segment_final failed", exc_info=True)
 
     def _is_silence(self, frame: bytes) -> bool:
+        if self._vad is not None and getattr(
+            self._vad, "supports_silence_detection", True
+        ):
+            try:
+                return not bool(self._vad.is_speech(frame))
+            except Exception:  # pragma: no cover - defensive guard
+                logger.debug("VAD check failed; falling back to energy threshold", exc_info=True)
         if not frame:
             return True
         mv = memoryview(frame).cast("h")
         energy = sum(sample * sample for sample in mv) / max(1, len(mv))
         return energy < self._energy_threshold
+
+    async def _flush_active_segment(self) -> None:
+        if not self._speech_active:
+            return
+        if self._buffer:
+            await self._emit_segment()
+        self._reset_segment_state()
+
+    def _reset_segment_state(self) -> None:
+        self._buffer.clear()
+        self._speech_active = False
+        self._silence_frames = 0
+        self._last_partial_text = ""
+        self._last_partial_at = 0.0
 
 
 __all__ = ["SimpleASRPipeline"]

@@ -1,6 +1,7 @@
 from .config import ASRConfig, load_config
 from .main import main, run_forever
 from .pipeline import SimpleASRPipeline
+from .vad import VoiceActivityDetector, build_vad
 
 SpeechPipeline = SimpleASRPipeline
 from .runner import run
@@ -12,7 +13,9 @@ __all__ = [
     "TranscriptionResult",
     "SimpleASRPipeline",
     "SpeechPipeline",
+    "VoiceActivityDetector",
     "build_transcriber",
+    "build_vad",
     "load_config",
     "main",
     "run",

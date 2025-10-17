@@ -23,6 +23,8 @@ class WebRtcVadModule(Protocol):
 
 
 class PassthroughVAD:
+    supports_silence_detection = False
+
     def __init__(self, frame_bytes: int) -> None:
         self._frame_bytes = frame_bytes
 
