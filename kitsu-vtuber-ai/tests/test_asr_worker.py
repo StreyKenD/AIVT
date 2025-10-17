@@ -168,6 +168,58 @@ def test_speech_pipeline_emits_partial_and_final(
     asyncio.run(_scenario())
 
 
+def test_speech_pipeline_emits_final_when_stream_ends_mid_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _scenario() -> None:
+        config = ASRConfig(
+            model_name="tiny",  # unused in test
+            orchestrator_url="http://localhost:8000",
+            sample_rate=16000,
+            frame_duration_ms=40,
+            partial_interval_ms=50,
+            silence_duration_ms=160,
+            vad_mode="webrtc",
+            vad_aggressiveness=2,
+            input_device=None,
+            fake_audio=False,
+            device_preference="cpu",
+            compute_type=None,
+        )
+
+        orchestrator = _RecordingOrchestrator()
+        pipeline = SpeechPipeline(
+            config=config,
+            vad=_StubVAD(config.frame_bytes),
+            transcriber=_StubTranscriber(),
+            orchestrator=orchestrator,  # type: ignore[arg-type]
+        )
+
+        loop = asyncio.get_running_loop()
+
+        async def _immediate_executor(_executor, func, *args):
+            return func(*args)
+
+        monkeypatch.setattr(
+            loop, "run_in_executor", _immediate_executor
+        )  # type: ignore[arg-type]
+
+        async def _frames():
+            speech = bytes([1]) + b"\x00" * (config.frame_bytes - 1)
+            for _ in range(4):
+                await asyncio.sleep(0.06)
+                yield speech
+
+        await pipeline.process(_frames())
+
+        event_types = [event for event, _ in orchestrator.events]
+        assert event_types.count("asr_final") == 1
+        final_event = orchestrator.events[-1][1]
+        assert final_event["text"] == "hello-final"
+
+    asyncio.run(_scenario())
+
+
 def test_speech_pipeline_skips_non_english_segments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
