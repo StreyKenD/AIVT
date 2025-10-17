@@ -279,7 +279,9 @@ class SimpleASRPipeline:
             logger.debug("Telemetry segment_final failed", exc_info=True)
 
     def _is_silence(self, frame: bytes) -> bool:
-        if self._vad is not None:
+        if self._vad is not None and getattr(
+            self._vad, "supports_silence_detection", True
+        ):
             try:
                 return not bool(self._vad.is_speech(frame))
             except Exception:  # pragma: no cover - defensive guard
