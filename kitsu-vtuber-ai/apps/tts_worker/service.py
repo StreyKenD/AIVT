@@ -246,7 +246,7 @@ class TTSService:
         while True:
             job = await self._queue.get()
             logger.debug(
-                "Processando job TTS request_id=%s texto_len=%d voice=%s queue_depth=%d",
+                "Processando job TTS request_id=%s text_len=%d voice=%s queue_depth=%d",
                 job.request_id,
                 len(job.text),
                 job.voice,
