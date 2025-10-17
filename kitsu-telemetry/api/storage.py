@@ -125,7 +125,7 @@ async def list_events(
     source: str | None = None,
     db_path: str | None = None,
 ) -> list[TelemetryEvent]:
-    """Retorna eventos com filtros opcionais."""
+    """Return events filtered by optional criteria."""
 
     database_path = _resolve_db_path(db_path)
     query = [
