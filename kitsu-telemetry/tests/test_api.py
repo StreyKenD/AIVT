@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import importlib
 import json
 import os
@@ -119,10 +120,38 @@ def test_event_ingest_batch_filter_and_export(telemetry_db):
             export_response = await async_client.get("/events/export")
             assert export_response.status_code == 200
             csv_content = (await export_response.aread()).decode("utf-8")
-            lines = [line for line in csv_content.splitlines() if line]
-            assert lines[0] == "ts,type,json_payload"
-            assert "emotion" in csv_content
-            assert "json_payload" in csv_content
+
+            reader = csv.reader(csv_content.splitlines())
+            rows = list(reader)
+            assert rows[0] == ["ts", "type", "json_payload"]
+
+            data_rows = rows[1:]
+            assert len(data_rows) == 4
+
+            parsed_rows = [
+                {"ts": ts, "type": event_type, "payload": json.loads(payload)}
+                for ts, event_type, payload in data_rows
+            ]
+
+            def _find_event(event_type: str, **expected_payload: object) -> None:
+                matches = [
+                    row
+                    for row in parsed_rows
+                    if row["type"] == event_type
+                    and all(row["payload"].get(key) == value for key, value in expected_payload.items())
+                ]
+                assert matches, f"missing event {event_type} with payload {expected_payload}"
+
+            _find_event("emotion", mood="happy", intensity=0.8)
+            _find_event("emotion", mood="excited")
+            _find_event("status", state="ok")
+            _find_event(
+                "hardware.gpu",
+                index=0,
+                name="Mock GPU",
+                temperature_c=62.0,
+                utilization_pct=70.0,
+            )
 
             metrics_response = await async_client.get("/metrics/latest")
             assert metrics_response.status_code == 200
