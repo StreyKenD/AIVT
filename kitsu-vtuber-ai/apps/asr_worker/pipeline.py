@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from typing import AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from .config import ASRConfig
 from .logger import logger
@@ -71,8 +71,26 @@ class SimpleASRPipeline:
         except asyncio.CancelledError:
             raise
         else:
-            await self._flush_active_segment()
-            logger.warning("Audio frame stream finished; waiting for next capture cycle")
+            speech_active = self._speech_active
+            buffered = bool(self._buffer)
+            if speech_active and buffered:
+                await self._emit_segment()
+                self._reset_segment_state()
+            else:
+                await self._flush_active_segment()
+            if speech_active:
+                if buffered:
+                    logger.warning(
+                        "Audio frame stream finished while speech active; emitted final segment"
+                    )
+                else:
+                    logger.warning(
+                        "Audio frame stream finished while speech active; waiting for next capture cycle"
+                    )
+            else:
+                logger.warning(
+                    "Audio frame stream finished; waiting for next capture cycle"
+                )
 
     async def process(self, frames: AsyncIterator[bytes]) -> None:
         """Backward-compatible alias for legacy callers/tests."""
