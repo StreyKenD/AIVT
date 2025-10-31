@@ -318,9 +318,15 @@
   }
 
   function cloneSummary(summary: MemorySummary): MemorySummary {
+    const { metadata: existingMetadata, ...withLegacy } = summary as MemorySummary & {
+      knobs?: Record<string, number>;
+    };
+    const { knobs: legacyKnobs, ...base } = withLegacy;
+    const metadata = existingMetadata ?? legacyKnobs ?? {};
+
     return {
-      ...summary,
-      knobs: { ...summary.knobs }
+      ...(base as Omit<MemorySummary, 'metadata'>),
+      metadata: { ...metadata }
     };
   }
 

@@ -28,11 +28,13 @@ export type PersonaSnapshot = {
   last_updated: number;
 };
 
+export type MemorySummaryMetadata = Record<string, number>;
+
 export type MemorySummary = {
   id: number | null;
   summary_text: string;
   mood_state: string;
-  knobs: Record<string, number>;
+  metadata?: MemorySummaryMetadata;
   ts: number;
 };
 
