@@ -4,8 +4,9 @@ import asyncio
 import contextlib
 from types import SimpleNamespace
 from typing import Iterable, List
-
 import pytest
+
+import apps.asr_worker.transcription as transcription
 
 import apps.asr_worker.runner as asr_runner
 from apps.asr_worker import (
@@ -15,6 +16,7 @@ from apps.asr_worker import (
     VoiceActivityDetector,
 )
 from apps.asr_worker.devices import gather_devices
+from apps.asr_worker.config import load_config, SherpaConfig
 
 
 class _StubVAD(VoiceActivityDetector):
@@ -37,12 +39,102 @@ class _StubTranscriber(Transcriber):
         return SimpleNamespace(text=f"hello-{suffix}", confidence=0.9, language="en")
 
 
+def test_build_transcriber_sherpa_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+
+    class _DummyStream:
+        def __init__(self) -> None:
+            self._text = ""
+
+        def accept_waveform(self, sample_rate: int, samples: np.ndarray) -> None:  # pragma: no cover - stub
+            return None
+
+        @property
+        def result(self) -> SimpleNamespace:
+            return SimpleNamespace(text=self._text)
+
+    class _DummyRecognizer:
+        @classmethod
+        def from_files(cls, **_kwargs: object) -> "_DummyRecognizer":
+            return cls()
+
+        def create_stream(self) -> _DummyStream:
+            return _DummyStream()
+
+        def decode_stream(self, stream: _DummyStream) -> None:
+            stream._text = "sherpa transcript"
+
+        def free_stream(self, _stream: _DummyStream) -> None:
+            return None
+
+    stub_module = SimpleNamespace(OfflineRecognizer=_DummyRecognizer)
+    original_loader = transcription.load_module_if_available
+
+    def _fake_loader(name: str):
+        if name == "sherpa_onnx":
+            return stub_module
+        if name == "numpy":
+            return np
+        return original_loader(name)
+
+    monkeypatch.setattr(transcription, "load_module_if_available", _fake_loader)
+
+    config = ASRConfig(
+        model_name="tiny",
+        orchestrator_url="http://localhost:8000",
+        sample_rate=16000,
+        frame_duration_ms=20,
+        partial_interval_ms=200,
+        silence_duration_ms=500,
+        vad_mode="none",
+        vad_aggressiveness=0,
+        input_device=None,
+        fake_audio=False,
+        device_preference="cpu",
+        compute_type=None,
+        allow_non_english=False,
+        backend="sherpa",
+        sherpa=SherpaConfig(
+            tokens="tokens.txt",
+            encoder="encoder.onnx",
+            decoder="decoder.onnx",
+            joiner="joiner.onnx",
+        ),
+    )
+
+    transcriber = transcription.build_transcriber(config)
+    result = transcriber.transcribe(b"\x00\x01" * 320)
+    assert result.text == "sherpa transcript"
+
+
+def test_build_transcriber_unknown_backend() -> None:
+    config = ASRConfig(
+        model_name="tiny",
+        orchestrator_url="http://localhost:8000",
+        sample_rate=16000,
+        frame_duration_ms=20,
+        partial_interval_ms=200,
+        silence_duration_ms=500,
+        vad_mode="none",
+        vad_aggressiveness=0,
+        input_device=None,
+        fake_audio=False,
+        device_preference="cpu",
+        compute_type=None,
+        allow_non_english=False,
+        backend="unsupported",
+    )
+
+    with pytest.raises(ValueError):
+        transcription.build_transcriber(config)
+
+
 class _RecordingOrchestrator:
     def __init__(self) -> None:
         self.events: List[tuple[str, dict]] = []
 
-    async def publish(self, event_type: str, payload: dict) -> None:
-        self.events.append((event_type, payload))
+    async def publish(self, event) -> None:
+        self.events.append((event.type, event.dict()))
 
 
 def test_speech_pipeline_emits_partial_and_final(
@@ -361,6 +453,61 @@ def test_gather_devices_handles_missing_modules(
     assert entries == []
 
 
+def test_load_config_converts_numeric_input_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_INPUT_DEVICE", "32")
+    config = load_config()
+    assert config.input_device == 32
+
+
+def test_load_config_keeps_named_input_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_INPUT_DEVICE", "USB Microphone")
+    config = load_config()
+    assert config.input_device == "USB Microphone"
+
+
+def test_load_config_recovers_from_invalid_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_SAMPLE_RATE", "not-a-number")
+    monkeypatch.setenv("ASR_FRAME_MS", "abc")
+    config = load_config()
+    assert config.sample_rate == 16000
+    assert config.frame_duration_ms == 20
+
+
+def test_load_config_adjusts_partial_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_FRAME_MS", "40")
+    monkeypatch.setenv("ASR_PARTIAL_INTERVAL_MS", "5")
+    config = load_config()
+    assert config.partial_interval_ms >= config.frame_duration_ms
+
+
+def test_load_config_clamps_silence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_FRAME_MS", "30")
+    monkeypatch.setenv("ASR_SILENCE_MS", "10")
+    config = load_config()
+    assert config.silence_duration_ms >= config.frame_duration_ms
+
+
+def test_load_config_clamps_vad_aggressiveness(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_VAD_AGGRESSIVENESS", "99")
+    config = load_config()
+    assert config.vad_aggressiveness == 3
+
+
+def test_load_config_strips_compute_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASR_COMPUTE_TYPE", "   ")
+    config = load_config()
+    assert config.compute_type is None
+
+
+def test_load_energy_threshold_handles_non_finite(monkeypatch: pytest.MonkeyPatch) -> None:
+    from apps.asr_worker.pipeline import _load_energy_threshold
+
+    monkeypatch.setenv("ASR_ENERGY_THRESHOLD", "nan")
+    assert _load_energy_threshold() == 300.0
+    monkeypatch.setenv("ASR_ENERGY_THRESHOLD", "-5")
+    assert _load_energy_threshold() == 300.0
+
+
 def test_run_worker_retries_after_pipeline_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -387,7 +534,7 @@ def test_run_worker_retries_after_pipeline_cancellation(
             def __init__(self, _url: str) -> None:
                 self.closed = False
 
-            async def publish(self, event_type: str, payload: dict) -> None:
+            async def publish(self, event) -> None:
                 return None
 
             async def aclose(self) -> None:

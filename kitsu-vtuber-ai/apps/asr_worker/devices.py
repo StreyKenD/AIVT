@@ -141,7 +141,7 @@ def _format_table(entries: Sequence[DeviceEntry]) -> str:
                 entry.name,
                 str(entry.channels),
                 entry.host or "-",
-                "✔" if entry.is_default else "",
+                "*" if entry.is_default else "",
             )
         )
     widths = [max(len(row[col]) for row in rows) for col in range(len(headers))]
@@ -149,6 +149,9 @@ def _format_table(entries: Sequence[DeviceEntry]) -> str:
     for row in rows:
         padded = [value.ljust(width) for value, width in zip(row, widths)]
         lines.append("  ".join(padded))
+    if any(entry.is_default for entry in entries):
+        lines.append("")
+        lines.append("* indicates the current default input device")
     return "\n".join(lines)
 
 

@@ -7,10 +7,19 @@ import logging
 import os
 import time
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol
 
+import numpy as np
+
+from libs.config import (
+    BarkTTSSettings,
+    CoquiTTSSettings,
+    PiperTTSSettings,
+    TTSSettings,
+    XTTSSettings,
+)
 from libs.telemetry import TelemetryClient
 
 logger = logging.getLogger("kitsu.tts")
@@ -24,6 +33,7 @@ class TTSResult:
     voice: str
     latency_ms: float
     cached: bool
+    backend: str
 
 
 @dataclass
@@ -32,6 +42,7 @@ class TTSJob:
     voice: Optional[str]
     request_id: str
     future: asyncio.Future[TTSResult]
+    backend: Optional[str] = field(default=None, init=False)
 
 
 class Synthesizer(Protocol):
@@ -39,6 +50,9 @@ class Synthesizer(Protocol):
         self, text: str, voice: Optional[str], destination: Path
     ) -> Path:
         """Generate audio at the destination path and return the file path."""
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        """Return a human-friendly voice identifier for telemetry/cache."""
 
 
 class TTSDiskCache:
@@ -65,6 +79,7 @@ class TTSDiskCache:
             visemes = metadata.get("visemes", [])
             latency_ms = float(metadata.get("latency_ms", 0.0))
             voice_id = metadata.get("voice", voice or "default")
+            backend = metadata.get("backend", "unknown")
             return TTSResult(
                 audio_path=audio_path,
                 visemes=[
@@ -74,9 +89,10 @@ class TTSDiskCache:
                 voice=voice_id,
                 latency_ms=latency_ms,
                 cached=True,
+                backend=str(backend),
             )
         except Exception as exc:  # pragma: no cover - defensive guard
-            logger.warning("Falha ao ler cache TTS %s: %s", meta_path, exc)
+            logger.warning("Failed to read TTS cache %s: %s", meta_path, exc)
             return None
 
     def store(self, text: str, voice: Optional[str], result: TTSResult) -> None:
@@ -88,6 +104,7 @@ class TTSDiskCache:
             "voice": result.voice,
             "latency_ms": result.latency_ms,
             "visemes": result.visemes,
+            "backend": result.backend,
         }
         meta_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -95,49 +112,90 @@ class TTSDiskCache:
 
 
 class CoquiSynthesizer:
-    def __init__(self) -> None:
+    def __init__(self, config: CoquiTTSSettings) -> None:
+        self._config = config
         module = self._load_module()
-        self._tts = module.TTS(
-            model_name=os.getenv("TTS_MODEL_NAME", "tts_models/en/vctk/vits")
-        )
-        self._device = os.getenv("TTS_DEVICE", "cuda")
+        try:
+            self._tts = module.TTS(
+                model_name=config.model_name,
+                progress_bar=False,
+            )
+        except Exception as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError(
+                f"Failed to load Coqui TTS model '{config.model_name}': {exc}"
+            ) from exc
 
     @staticmethod
     def _load_module():
         try:
             from TTS.api import TTS as CoquiTTS  # type: ignore
         except Exception as exc:  # pragma: no cover - dependency guard
-            raise RuntimeError("Coqui TTS is not installed") from exc
+            raise RuntimeError(
+                "Coqui TTS is not installed. Install it with 'poetry install' or 'pip install TTS'."
+            ) from exc
         return type("Module", (), {"TTS": CoquiTTS})
+
+    def _resolve_speaker(self, voice: Optional[str]) -> Optional[str]:
+        if voice:
+            mapped = self._config.speaker_map.get(voice, voice)
+            return mapped.strip() or None
+        if self._config.default_speaker:
+            return self._config.default_speaker.strip() or None
+        return None
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        if requested_voice:
+            return requested_voice
+        if self._config.default_speaker:
+            return self._config.default_speaker
+        return self._config.model_name
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
     ) -> Path:
+        speaker = self._resolve_speaker(voice)
         loop = asyncio.get_running_loop()
 
         def _run() -> None:
-            kwargs: dict[str, object] = {"file_path": destination}
-            if voice:
-                kwargs["speaker"] = voice
-            self._tts.tts_to_file(text, **kwargs)
+            kwargs: Dict[str, object] = {"text": text, "file_path": destination}
+            if speaker:
+                kwargs["speaker"] = speaker
+            self._tts.tts_to_file(**kwargs)
 
         await loop.run_in_executor(None, _run)
         return destination
 
 
 class PiperSynthesizer:
-    def __init__(self) -> None:
-        raw_binary = os.getenv("PIPER_PATH", "piper")
-        raw_model = os.getenv("PIPER_MODEL", "")
-
-        if not raw_model or not raw_model.strip():
+    def __init__(self, config: PiperTTSSettings) -> None:
+        self._config = config
+        raw_model = (config.model or "").strip()
+        raw_binary = (config.binary or "").strip()
+        if not raw_model:
             raise RuntimeError("PIPER_MODEL is not configured")
-        if not raw_binary or not raw_binary.strip():
+        if not raw_binary:
             raise RuntimeError("PIPER_PATH is not configured")
+        self._binary = Path(raw_binary).expanduser()
+        self._model = Path(raw_model).expanduser()
+        raw_config = (config.config or "").strip()
+        self._config_path: Path | None = (
+            Path(raw_config).expanduser() if raw_config else None
+        )
 
-        self._binary = Path(raw_binary)
-        self._model = Path(raw_model)
-        self._config = Path(os.getenv("PIPER_CONFIG", ""))
+    def _resolve_speaker(self, voice: Optional[str]) -> Optional[str]:
+        if voice:
+            mapped = self._config.speaker_map.get(voice, voice)
+            return mapped.strip() or None
+        if self._config.default_speaker:
+            return self._config.default_speaker.strip() or None
+        return None
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        if requested_voice:
+            return requested_voice
+        if self._config.default_speaker:
+            return self._config.default_speaker
+        return "piper"
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
@@ -149,9 +207,12 @@ class PiperSynthesizer:
             "--output_file",
             str(destination),
         ]
-        if self._config:
-            cmd.extend(["--config", str(self._config)])
-        logger.info("Executando Piper TTS via %s", cmd)
+        if self._config_path is not None:
+            cmd.extend(["--config", str(self._config_path)])
+        speaker = self._resolve_speaker(voice)
+        if speaker:
+            cmd.extend(["--speaker", speaker])
+        logger.info("Running Piper TTS via %s", cmd)
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -165,15 +226,160 @@ class PiperSynthesizer:
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
             raise RuntimeError(
-                f"Piper falhou: {stderr.decode('utf-8', errors='ignore')}"
+                f"Piper failed: {stderr.decode('utf-8', errors='ignore')}"
             )
         if stdout:
             logger.debug("Piper stdout: %s", stdout[:120])
         return destination
 
 
+class BarkSynthesizer:
+    def __init__(self, config: BarkTTSSettings) -> None:
+        self._config = config
+        module = self._load_module()
+        self._generate_audio = module["generate_audio"]
+        self._preload_models = module["preload_models"]
+        self._sample_rate = module["sample_rate"]
+        self._models_ready = False
+
+    @staticmethod
+    def _load_module():
+        try:
+            from bark import SAMPLE_RATE, generate_audio, preload_models  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError(
+                "Bark is not installed. Install it with 'pip install bark-voice-clone'."
+            ) from exc
+        return {
+            "generate_audio": generate_audio,
+            "preload_models": preload_models,
+            "sample_rate": SAMPLE_RATE,
+        }
+
+    def _resolve_prompt(self, voice: Optional[str]) -> Optional[str]:
+        if voice:
+            prompt = self._config.speaker_prompts.get(voice, voice)
+            if prompt:
+                return prompt
+        if self._config.history_prompt:
+            return self._config.history_prompt
+        return self._config.voice_preset
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        if requested_voice:
+            return requested_voice
+        if self._config.history_prompt:
+            return self._config.history_prompt
+        return self._config.voice_preset
+
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
+        loop = asyncio.get_running_loop()
+        prompt = self._resolve_prompt(voice)
+        text_temp = self._config.text_temperature
+        waveform_temp = self._config.waveform_temperature
+
+        def _run() -> np.ndarray:
+            if not self._models_ready:
+                self._preload_models()
+                self._models_ready = True
+            audio_array = self._generate_audio(
+                text,
+                history_prompt=prompt,
+                text_temp=text_temp,
+                waveform_temp=waveform_temp,
+            )
+            return np.array(audio_array, dtype=np.float32)
+
+        audio = await loop.run_in_executor(None, _run)
+        if audio.ndim > 1:
+            audio = audio.flatten()
+        audio = np.clip(audio, -1.0, 1.0)
+        int_audio = (audio * 32767).astype("<i2")
+        with wave.open(str(destination), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(self._sample_rate)
+            wav_file.writeframes(int_audio.tobytes())
+        return destination
+
+
+class XTTSSynthesizer:
+    def __init__(self, config: XTTSSettings) -> None:
+        self._config = config
+        module = CoquiSynthesizer._load_module()
+        try:
+            self._tts = module.TTS(
+                model_name=config.model_name,
+                progress_bar=False,
+            )
+        except Exception as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError(
+                f"Failed to load XTTS model '{config.model_name}': {exc}"
+            ) from exc
+
+    def _resolve_speaker_path(self, voice: Optional[str]) -> Optional[Path]:
+        if voice:
+            mapped = self._config.speaker_wavs.get(voice)
+            candidate = Path(mapped or voice).expanduser()
+            if candidate.exists():
+                return candidate
+        if self._config.default_speaker_wav:
+            candidate = Path(self._config.default_speaker_wav).expanduser()
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _resolve_language(self, voice: Optional[str]) -> str:
+        if voice and voice in self._config.language_overrides:
+            return self._config.language_overrides[voice]
+        return self._config.default_language
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        if requested_voice:
+            if requested_voice in self._config.speaker_wavs:
+                return requested_voice
+            candidate = Path(requested_voice)
+            if candidate.exists():
+                return candidate.stem
+            return requested_voice
+        if self._config.default_speaker_name:
+            return self._config.default_speaker_name
+        if self._config.default_speaker_wav:
+            return Path(self._config.default_speaker_wav).stem
+        return "xtts"
+
+    async def synthesize(
+        self, text: str, voice: Optional[str], destination: Path
+    ) -> Path:
+        loop = asyncio.get_running_loop()
+        speaker_path = self._resolve_speaker_path(voice)
+        if speaker_path is None:
+            raise RuntimeError(
+                "XTTS requires a speaker WAV. Configure 'tts.xtts.default_speaker_wav' or provide a voice mapped to a file."
+            )
+        language = self._resolve_language(voice)
+
+        def _run() -> None:
+            self._tts.tts_to_file(
+                text=text,
+                speaker_wav=str(speaker_path),
+                language=language,
+                file_path=destination,
+            )
+
+        await loop.run_in_executor(None, _run)
+        return destination
+
+
 class SilentSynthesizer:
     """Deterministic fallback used in test environments."""
+
+    def describe_voice(self, requested_voice: Optional[str]) -> Optional[str]:
+        if requested_voice:
+            return requested_voice
+        return "synthetic"
 
     async def synthesize(
         self, text: str, voice: Optional[str], destination: Path
@@ -190,18 +396,37 @@ class SilentSynthesizer:
         return destination
 
 
-def _default_synthesizers() -> List[Synthesizer]:
+def _build_synthesizers(config: TTSSettings) -> List[Synthesizer]:
+    order: List[str]
+    if config.backend == "auto":
+        order = ["coqui", "xtts", "bark", "piper"]
+    else:
+        order = [config.backend]
+    for fallback in config.fallback_backends:
+        if fallback not in order:
+            order.append(fallback)
     synthesizers: List[Synthesizer] = []
-    if os.getenv("TTS_DISABLE_COQUI") != "1":
+    seen: set[str] = set()
+    for backend in order:
+        name = backend.strip().lower()
+        if not name or name in seen:
+            continue
+        seen.add(name)
         try:
-            synthesizers.append(CoquiSynthesizer())
+            if name == "coqui":
+                synthesizers.append(CoquiSynthesizer(config.coqui))
+            elif name == "piper":
+                synthesizers.append(PiperSynthesizer(config.piper))
+            elif name == "bark":
+                synthesizers.append(BarkSynthesizer(config.bark))
+            elif name == "xtts":
+                synthesizers.append(XTTSSynthesizer(config.xtts))
+            elif name == "silent":
+                synthesizers.append(SilentSynthesizer())
+            else:
+                logger.warning("Unknown TTS backend configured: %s", backend)
         except Exception as exc:
-            logger.warning("Coqui unavailable: %s", exc)
-    if os.getenv("TTS_DISABLE_PIPER") != "1":
-        try:
-            synthesizers.append(PiperSynthesizer())
-        except Exception as exc:
-            logger.warning("Piper unavailable: %s", exc)
+            logger.warning("Skipping TTS backend %s: %s", backend, exc)
     synthesizers.append(SilentSynthesizer())
     return synthesizers
 
@@ -212,14 +437,30 @@ class TelemetryPublisher(Protocol):
 
 
 class TTSService:
-    def __init__(self, telemetry: Optional[TelemetryPublisher] = None) -> None:
-        output_dir = Path(os.getenv("TTS_OUTPUT_DIR", "artifacts/tts"))
+    def __init__(
+        self,
+        *,
+        config: TTSSettings,
+        telemetry: Optional[TelemetryPublisher] = None,
+        cache_dir: str | Path | None = None,
+    ) -> None:
+        output_root = cache_dir or config.cache_dir
+        output_dir = Path(output_root)
+        self._config = config
         self._cache = TTSDiskCache(output_dir)
-        self._synthesizers = _default_synthesizers()
+        self._synthesizers = _build_synthesizers(config)
         self._queue: asyncio.Queue[TTSJob] = asyncio.Queue()
         self._current_job: Optional[TTSJob] = None
         self._cancel_event = asyncio.Event()
         self._telemetry = telemetry or TelemetryClient.from_env(service="tts_worker")
+        real_backends = [
+            s for s in self._synthesizers if not isinstance(s, SilentSynthesizer)
+        ]
+        logger.info(
+            "TTS initialized with backends=%s (cache_dir=%s)",
+            [s.__class__.__name__ for s in real_backends] or ["silent"],
+            output_dir,
+        )
 
     async def enqueue(
         self, text: str, voice: Optional[str] = None, request_id: Optional[str] = None
@@ -238,15 +479,15 @@ class TTSService:
     async def cancel_active(self) -> None:
         if self._current_job is None:
             return
-        logger.info("Cancelando job TTS em andamento: %s", self._current_job.request_id)
+        logger.info("Cancelling TTS job in progress: %s", self._current_job.request_id)
         self._cancel_event.set()
 
     async def worker(self) -> None:
-        logger.info("Fila TTS pronta (%d synthesizers)", len(self._synthesizers))
+        logger.info("TTS queue ready (%d synthesizers)", len(self._synthesizers))
         while True:
             job = await self._queue.get()
             logger.debug(
-                "Processando job TTS request_id=%s text_len=%d voice=%s queue_depth=%d",
+                "Processing TTS job request_id=%s text_len=%d voice=%s queue_depth=%d",
                 job.request_id,
                 len(job.text),
                 job.voice,
@@ -255,11 +496,13 @@ class TTSService:
             cached = self._cache.get(job.text, job.voice)
             if cached:
                 logger.info(
-                    "TTS cache hit request_id=%s voice=%s latency_ms=%.2f",
+                    "TTS cache hit request_id=%s voice=%s latency_ms=%.2f backend=%s",
                     job.request_id,
                     cached.voice,
                     cached.latency_ms,
+                    cached.backend,
                 )
+                job.backend = cached.backend
                 job.future.set_result(cached)
                 await self._emit_metric(job, cached, cached=True)
                 self._queue.task_done()
@@ -274,11 +517,11 @@ class TTSService:
                 job.future.set_result(result)
                 await self._emit_metric(job, result, cached=False)
             except asyncio.CancelledError as exc:
-                logger.info("Job TTS cancelado: %s", job.request_id)
+                logger.info("TTS job cancelled: %s", job.request_id)
                 job.future.set_exception(exc)
                 await self._emit_metric(job, None, cached=False, error=str(exc))
             except Exception as exc:
-                logger.exception("Falha ao gerar TTS: %s", exc)
+                logger.exception("Failed to generate TTS: %s", exc)
                 job.future.set_exception(exc)
                 await self._emit_metric(job, None, cached=False, error=str(exc))
             finally:
@@ -301,6 +544,7 @@ class TTSService:
             "voice": job.voice or (result.voice if result else None),
             "cached": cached,
             "queue_depth": self._queue.qsize(),
+            "backend": job.backend or (result.backend if result else None),
         }
         if result is not None:
             payload["latency_ms"] = result.latency_ms
@@ -316,18 +560,21 @@ class TTSService:
 
     async def _synthesize(self, job: TTSJob) -> TTSResult:
         audio_path, _ = self._cache.resolve(job.text, job.voice)
+        last_error: Optional[str] = None
         for synthesizer in self._synthesizers:
             if self._cancel_event.is_set():
                 raise asyncio.CancelledError()
+            backend_name = synthesizer.__class__.__name__.lower()
+            job.backend = backend_name
             try:
                 path = await synthesizer.synthesize(job.text, job.voice, audio_path)
                 visemes = self._viseme_from_text(job.text)
-                voice_id = job.voice or self._detect_voice_name(synthesizer)
+                voice_id = self._describe_voice(synthesizer, job.voice)
                 logger.info(
-                    "TTS gerado request_id=%s voice=%s synth=%s",
+                    "TTS generated request_id=%s voice=%s backend=%s",
                     job.request_id,
                     voice_id,
-                    synthesizer.__class__.__name__,
+                    backend_name,
                 )
                 return TTSResult(
                     audio_path=path,
@@ -335,23 +582,30 @@ class TTSService:
                     voice=voice_id,
                     latency_ms=0.0,
                     cached=False,
+                    backend=backend_name,
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                last_error = str(exc)
                 logger.warning(
-                    "Synthesizer %s falhou: %s", synthesizer.__class__.__name__, exc
+                    "Synthesizer %s failed: %s", synthesizer.__class__.__name__, exc
                 )
                 continue
-        raise RuntimeError("No synthesizer was able to generate audio")
+        raise RuntimeError(
+            last_error or "No synthesizer was able to generate audio"
+        )
 
     @staticmethod
-    def _detect_voice_name(synthesizer: Synthesizer) -> str:
-        if isinstance(synthesizer, CoquiSynthesizer):
-            return os.getenv("TTS_MODEL_NAME", "coqui")
-        if isinstance(synthesizer, PiperSynthesizer):
-            return "piper"
-        return "synthetic"
+    def _describe_voice(synthesizer: Synthesizer, requested_voice: Optional[str]) -> str:
+        descriptor = getattr(synthesizer, "describe_voice", None)
+        if callable(descriptor):
+            resolved = descriptor(requested_voice)
+            if resolved:
+                return resolved
+        if requested_voice:
+            return requested_voice
+        return synthesizer.__class__.__name__.lower()
 
     @staticmethod
     def _viseme_from_text(text: str) -> List[Dict[str, float]]:
@@ -380,10 +634,15 @@ class TTSService:
 _service: Optional[TTSService] = None
 
 
-def get_tts_service() -> TTSService:
+def get_tts_service(
+    *,
+    config: TTSSettings,
+    telemetry: Optional[TelemetryPublisher] = None,
+    cache_dir: str | Path | None = None,
+) -> TTSService:
     global _service
     if _service is None:
-        _service = TTSService()
+        _service = TTSService(config=config, telemetry=telemetry, cache_dir=cache_dir)
     return _service
 
 
@@ -391,4 +650,9 @@ __all__ = [
     "TTSService",
     "TTSResult",
     "get_tts_service",
+    "PiperSynthesizer",
+    "CoquiSynthesizer",
+    "BarkSynthesizer",
+    "XTTSSynthesizer",
+    "SilentSynthesizer",
 ]

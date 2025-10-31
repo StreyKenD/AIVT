@@ -204,11 +204,33 @@ export async function fetchSoakResults(limit = 10): Promise<SoakResult[]> {
 }
 
 export async function downloadTelemetryCsv(): Promise<Blob> {
-  const response = await controlFetch('/telemetry/export', { method: 'GET' });
+  const response = await controlFetch('/telemetry/export', {
+    method: 'GET',
+    headers: { Accept: 'text/csv' }
+  });
   if (!response.ok) {
-    throw new ApiError(`Falha no download (${response.status})`, response.status);
+    throw new ApiError(`Download failed (${response.status})`, response.status);
   }
-  return await response.blob();
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new ApiError('CSV export returned no data.', response.status);
+  }
+
+  const disposition = response.headers.get('content-disposition');
+  if (disposition) {
+    const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition);
+    if (match) {
+      const rawName = match[1] ?? match[2];
+      try {
+        const suggested = decodeURIComponent(rawName);
+        (blob as Blob & { suggestedName?: string }).suggestedName = suggested;
+      } catch {
+        (blob as Blob & { suggestedName?: string }).suggestedName = rawName;
+      }
+    }
+  }
+
+  return blob;
 }
 
 class ApiError extends Error {
@@ -224,11 +246,10 @@ class ApiError extends Error {
 }
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const url = `${ORCH_BASE_URL}${path}`;
-  const response = await fetch(url, {
-    headers: buildHeaders(init.headers),
-    ...init
-  });
+  const url = combineUrl(ORCH_BASE_URL, path);
+  const requestInit: RequestInit = { ...init };
+  requestInit.headers = buildHeaders(requestInit);
+  const response = await fetch(url, requestInit);
 
   let parsed: JsonValue | undefined;
   const contentType = response.headers.get('content-type');
@@ -239,11 +260,7 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    const message =
-      typeof parsed === 'object' && parsed !== null && 'detail' in parsed
-        ? String((parsed as Record<string, unknown>).detail ?? 'Request failed')
-        : `Request failed with status ${response.status}`;
-    throw new ApiError(message, response.status, parsed);
+    throw new ApiError(extractErrorMessage(parsed, response.status), response.status, parsed);
   }
 
   return parsed as T;
@@ -256,30 +273,35 @@ async function controlRequest<T>(path: string, init: RequestInit = {}): Promise<
   const contentType = response.headers.get('content-type');
   if (contentType && contentType.includes('application/json')) {
     parsed = (await response.json()) as JsonValue;
+  } else if (response.status !== 204) {
+    parsed = (await response.text()) as unknown as JsonValue;
   }
 
   if (!response.ok) {
-    const message =
-      typeof parsed === 'object' && parsed !== null && 'detail' in parsed
-        ? String((parsed as Record<string, unknown>).detail ?? 'Request failed')
-        : `Request failed with status ${response.status}`;
-    throw new ApiError(message, response.status, parsed);
+    throw new ApiError(extractErrorMessage(parsed, response.status), response.status, parsed);
   }
 
   return parsed as T;
 }
 
 async function controlFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const url = `${CONTROL_BASE_URL}${path}`;
-  return fetch(url, {
-    headers: buildHeaders(init.headers),
-    ...init
-  });
+  const url = combineUrl(CONTROL_BASE_URL, path);
+  const requestInit: RequestInit = { ...init };
+  requestInit.headers = buildHeaders(requestInit);
+  return fetch(url, requestInit);
 }
 
-function buildHeaders(headers: HeadersInit | undefined): HeadersInit {
-  const existing = new Headers(headers);
-  if (!existing.has('Content-Type')) {
+function buildHeaders(init: RequestInit): Headers {
+  const existing = new Headers(init.headers);
+  const body = init.body ?? null;
+  const method = (init.method ?? 'GET').toUpperCase();
+  const hasBody = body !== null && body !== undefined && method !== 'GET' && method !== 'HEAD';
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  const isBlob = typeof Blob !== 'undefined' && body instanceof Blob;
+
+  const isUrlEncoded = typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams;
+
+  if (hasBody && !isFormData && !isBlob && !isUrlEncoded && !existing.has('Content-Type')) {
     existing.set('Content-Type', 'application/json');
   }
   if (!existing.has('Accept')) {
@@ -289,10 +311,53 @@ function buildHeaders(headers: HeadersInit | undefined): HeadersInit {
 }
 
 function sanitizeBaseUrl(url: string, fallback: string): string {
-  if (!url) {
-    return fallback;
+  const normalizedFallback = fallback.endsWith('/') ? fallback.slice(0, -1) : fallback;
+  const trimmed = (url ?? '').trim();
+  if (!trimmed) {
+    return normalizedFallback;
   }
-  return url.endsWith('/') ? url.slice(0, -1) : url;
+  try {
+    if (trimmed.startsWith('/')) {
+      const base = normalizedFallback.endsWith('/') ? normalizedFallback : `${normalizedFallback}/`;
+      const relative = new URL(trimmed, base).href;
+      return relative.endsWith('/') && trimmed !== '/' ? relative.slice(0, -1) : relative;
+    }
+    const parsed = new URL(trimmed);
+    const href = parsed.href.endsWith('/') ? parsed.href.slice(0, -1) : parsed.href;
+    return href;
+  } catch {
+    console.warn(`Invalid base URL "${trimmed}", falling back to ${normalizedFallback}`);
+    return normalizedFallback;
+  }
+}
+
+function combineUrl(base: string, path: string): string {
+  const trimmedPath = (path ?? '').trim();
+  if (!trimmedPath) {
+    return base;
+  }
+  if (trimmedPath.startsWith('http://') || trimmedPath.startsWith('https://')) {
+    return trimmedPath;
+  }
+  if (trimmedPath.startsWith('?') || trimmedPath.startsWith('#')) {
+    return `${base}${trimmedPath}`;
+  }
+  const normalized = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
+  return `${base}${normalized}`;
+}
+
+function extractErrorMessage(parsed: JsonValue | undefined, status: number): string {
+  if (typeof parsed === 'object' && parsed !== null) {
+    const record = parsed as Record<string, unknown>;
+    const detail = record.detail ?? record.message ?? record.error;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail;
+    }
+  }
+  if (typeof parsed === 'string' && parsed.trim()) {
+    return parsed.trim();
+  }
+  return `Request failed with status ${status}`;
 }
 
 export { ApiError };

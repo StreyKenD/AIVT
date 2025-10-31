@@ -11,7 +11,48 @@ Kitsu.exe is the backbone of the "Kitsu" VTuber AI – a kawaii, chaotic fox tha
         |                                             v
         +--> [Orchestrator] <--> [OBS Controller] <--> [Avatar Controller]
                               \--> [Control Panel Backend]
+
+### Service contracts
+- Shared request/response shapes now live in `libs/contracts/`. ASR, TTS, policy, and control-plane workers all import these Pydantic models so we only define the wire format once.
+- Thin async HTTP helpers (e.g. the orchestrator publisher used by the ASR worker) are under `libs/clients/`. Use these instead of ad-hoc `httpx` calls when a service needs to reach another one.
+- Each worker module (`apps/*`) keeps its FastAPI app or runner logic, but they no longer import code from another worker; cross-service communication goes through the contracts/clients packages.
+
+### Configuration
+- Service settings (ports, downstream URLs, ASR/VAD tuning) now live in `config/kitsu.yaml`. Copy `config/kitsu.example.yaml`, tweak each section (`orchestrator`, `policy`, `tts`, `asr`, `memory`), and keep it under version control for reproducible deployments.
+- `.env` is still respected for secrets and quick overrides, but the YAML file is the source of truth. Set `KITSU_CONFIG_FILE` if you need to load from a different location.
+
+- `asr.backend` selects the speech recogniser (`whisper` uses Faster-Whisper; `sherpa` uses Sherpa-ONNX for low-latency CPU decoding). When using Sherpa, install `sherpa-onnx` and point `asr.sherpa.*` at your model files.
+#### Sherpa-ONNX backend
+1. `pip install sherpa-onnx` (optional dependency).
+2. Download a model (for example, the small English Zipformer package):
+   ```bash
+   mkdir -p models/sherpa-onnx/en
+   curl -L -o models/sherpa-onnx/en/tokens.txt https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26/resolve/main/tokens.txt
+   curl -L -o models/sherpa-onnx/en/encoder.onnx https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26/resolve/main/encoder.onnx
+   curl -L -o models/sherpa-onnx/en/decoder.onnx https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26/resolve/main/decoder.onnx
+   curl -L -o models/sherpa-onnx/en/joiner.onnx https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26/resolve/main/joiner.onnx
+   ```
+3. Update `config/kitsu.yaml` (or set env overrides) with the downloaded paths under `asr.sherpa.*` and set `asr.backend` to `sherpa`.
+
+- `policy.backend` controls which LLM connector the policy worker uses:
+  - `ollama` (default): streams from the local Ollama daemon at `policy.ollama_url`. Pull the model referenced by `LLM_MODEL_NAME` (Mixtral by default) with `ollama pull`.
+  - `openai`: calls the OpenAI Chat Completions API. Install the optional dependencies with `poetry install -E openai`, set `OPENAI_API_KEY`, and choose the target model via `policy.openai.model`.
+  - `local`: runs HuggingFace Transformers locally. Install with `poetry install -E local-llm` (installs `transformers` + `torch`) and configure `policy.local.model_path` / `tokenizer_path` / `device` / `max_new_tokens` as needed.
+- `tts.backend` toggles between voice synthesizers:
+  - `coqui` (default): uses lightweight multi-speaker Coqui models and honours `tts.coqui.speaker_map` for voice aliases.
+  - `xtts`: loads Coqui XTTS v2 for multilingual voice cloning; set `tts.xtts.default_speaker_wav` (or map names via `tts.xtts.speaker_wavs`) and optionally override per-voice languages.
+  - `bark`: runs Suno Bark for highly expressive output. Latency is higher—best suited for pre-recorded or “special effect” lines.
+  - Combine with `tts.fallback_backends` (e.g. `["piper"]`) to fail over to CPU-friendly voices when a premium backend is unavailable.
+
+### Quick sanity check
+
+With the pipeline running, trigger a headless exchange from the CLI:
+
+```bash
+poetry run python examples/quick_conversation.py --text "Testing from the command line"
 ```
+
+Add `--preset hype` to swap persona presets before sending the message, or `--no-tts` if you only want policy output.
 
 ## Vision
 - Initial persona: **kawaii & chaotic**, English-speaking.
@@ -95,8 +136,8 @@ These variables control how the orchestrator exposes HTTP/WebSocket endpoints an
 - `ORCHESTRATOR_URL`: HTTP address used by workers and integrations (Twitch, OBS, VTS) to publish events to the orchestrator.
 
 > Tip: once `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN` are stored in `.env`, refresh the chat token any time with `poetry run python scripts/refresh_twitch_token.py`.
-- `TTS_OUTPUT_DIR`: folder where synthesized audio is cached (default `artifacts/tts`).
-- `TTS_MODEL_NAME` / `PIPER_MODEL`: identifiers for the Coqui/Piper models loaded by the workers (see [TTS Worker](#tts-worker)).
+- `TTS_CACHE_DIR` / `tts.cache_dir`: folder where synthesized audio is cached (default `artifacts/tts_cache`).
+- `tts.coqui.model_name` / `tts.piper.model`: checkpoints loaded by the speech synthesizers (override temporarily with `TTS_MODEL_NAME` / `PIPER_MODEL`).
 - `TWITCH_CHANNEL` / `TWITCH_OAUTH_TOKEN`: credentials for the `twitchio` bot responsible for reading commands in real time. Provide `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN` if you want to let the helper script rotate tokens automatically. Set `TWITCH_BOT_NICK` and `TWITCH_DEFAULT_SCENE` to customize the nickname or fallback scene.
 - `OBS_WS_URL` / `OBS_WS_PASSWORD`: **obs-websocket v5** endpoint and password configured in OBS. `OBS_SCENES` accepts a comma-separated list used by the demo script; `OBS_PANIC_FILTER` indicates the filter triggered by the panic macro.
 - `VTS_URL` / `VTS_AUTH_TOKEN`: WebSocket endpoint and persistent token for VTube Studio. Adjust `VTS_PLUGIN_NAME`/`VTS_DEVELOPER` to identify the plugin inside VTS settings.
@@ -118,7 +159,7 @@ These variables control how the orchestrator exposes HTTP/WebSocket endpoints an
 - Lint: `poetry run ruff .`
 - Formatting: `poetry run black --check .`
 - Typing: `poetry run mypy`
-- Tests: `poetry run pytest -q` (or `python -m pytest -q` after `python -m pip install pytest pytest-asyncio`)
+- Tests: focus first on `poetry run pytest tests/test_config_loader.py tests/test_pipeline_runner.py tests/test_orchestrator.py::test_chat_pipeline_hits_policy_and_tts`; follow up with `poetry run pytest -q` (or `python -m pytest -q` after `python -m pip install pytest pytest-asyncio`)
 - Pre-commit: `poetry run pre-commit run --all-files`
 
 > Install the hooks locally with `poetry run pre-commit install` (the [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) file already targets `apps/`, `libs/`, and `tests/`).
@@ -174,18 +215,24 @@ Keep these references available whenever you share builds or recordings.
 - Exposed on `/status` under `memory.current_summary` and `restore_context`.
 
 ## Policy / LLM
-- `apps/policy_worker` queries Ollama (`OLLAMA_URL`) using **Mixtral** by default (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`). Run `ollama pull mixtral:8x7b-instruct-q4_K_M` before the first boot.
+- `apps/policy_worker` supports pluggable LLM connectors configured via `policy.backend` (`ollama`, `openai`, or `local`). The default Ollama path streams from `policy.ollama_url` and uses **Mixtral** (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`)—run `ollama pull mixtral:8x7b-instruct-q4_K_M` (or your chosen model) before the first boot. For OpenAI, install the optional extra with `poetry install -E openai` and set `OPENAI_API_KEY`/`policy.openai.model`. For local transformers, install `poetry install -E local-llm` and point `policy.local.model_path` (plus `tokenizer_path`, `device`, etc.) at the HF model you want to serve.
 - The `POST /respond` endpoint returns an SSE stream (`text/event-stream`) with `start`, `token`, `retry`, and `final` events. Each `token` represents the incremental XML stream; the `final` event includes metrics (`latency_ms`, `stats`) and persona metadata.
 - The prompt combines system instructions and few-shots to reinforce the kawaii/chaotic style, energy/chaos levels (`chaos_level`, `energy`), and family mode (`POLICY_FAMILY_FRIENDLY`).
 - Family-friendly filtering is enforced by a synchronous moderation pipeline (`configs/safety/` + `libs.safety.ModerationPipeline`). Forbidden prompts return a safe message immediately; final responses go through an additional scan and, if necessary, are sanitized before reaching TTS.
 - The worker retries (`POLICY_RETRY_ATTEMPTS`, `POLICY_RETRY_BACKOFF`) and, if the LLM cannot produce valid XML, emits a final SSE event with empty content and `meta.status=error` so downstream services can decide how to recover without playing canned speech.
 
 ## TTS Worker
-- The service (`apps/tts_worker`) prioritizes Coqui-TTS (`TTS_MODEL_NAME`) and falls back to Piper (`PIPER_MODEL`, `PIPER_PATH`) when the former is unavailable. If neither backend loads, a deterministic synthesizer generates silence for tests.
-- Outputs are cached on disk (`artifacts/tts`) with JSON metadata (voice, latency, visemes). Repeated calls reuse the local file.
-- Use `TTS_DISABLE_COQUI=1` or `TTS_DISABLE_PIPER=1` to force a specific backend while debugging.
-- Install `espeak-ng` (or `espeak`) if you want the Coqui/Piper voices to emit real audio; without it the worker logs a warning and stays in synthetic mode.
-- The `cancel_active()` method stops in-progress jobs before the next synthesized chunk, useful for barge-in scenarios.
+- The service (`apps/tts_worker`) instantiates synthesizers from `tts.backend` and `tts.fallback_backends`. Coqui remains the default, XTTS v2 adds multilingual voice cloning (using `tts.xtts.default_speaker_wav` or per-voice mappings), and Bark provides highly expressive, characterful speech. A deterministic silent synth is always kept as a last resort.
+- Outputs are cached under `tts.cache_dir` (default `artifacts/tts_cache`) with JSON metadata capturing voice, backend, latency, and visemes so repeated lines reuse the generated audio.
+- Customise voices with config: map aliases to Coqui speakers via `tts.coqui.speaker_map`, point XTTS voices to reference WAVs via `tts.xtts.speaker_wavs`, and tweak Bark prompts/temperatures through `tts.bark.*`.
+- Install optional extras as needed—`poetry install -E bark` pulls in Suno Bark dependencies, while `poetry install` already provides Coqui/XTTS. Bark is CPU-friendly but slower; XTTS benefits from GPU acceleration and requires high-quality reference audio.
+- The `cancel_active()` method still stops in-progress jobs before the next synthesized chunk, making barge-in/interrupt scenarios safe.
+
+## Local Web UI & Overlay
+- A lightweight chat console lives at `http://127.0.0.1:8000/webui/chat`. It connects to the orchestrator WebSocket, streams partial tokens, and lets you send text prompts (optionally skipping TTS) without opening the full telemetry dashboard.
+- OBS-friendly captions are available at `http://127.0.0.1:8000/webui/overlay`. Load the page as a browser source with transparency enabled to display Kitsu’s current line on stream.
+- `POST /chat/respond` accepts `{text, play_tts}` to trigger the same pipeline programmatically (handy for scripts or testing without the UI).
+- Both pages are static HTML/JS bundles served directly by the orchestrator, so no extra build step is required.
 
 ## Next steps
 - Connect with the telemetry dashboard (`kitsu-telemetry` repo).

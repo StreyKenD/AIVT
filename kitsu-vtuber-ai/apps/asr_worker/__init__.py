@@ -1,4 +1,4 @@
-from .config import ASRConfig, load_config
+from .config import ASRConfig, SherpaConfig, load_config
 from .main import main, run_forever
 from .pipeline import SimpleASRPipeline
 from .vad import VoiceActivityDetector, build_vad
@@ -9,6 +9,7 @@ from .transcription import Transcriber, TranscriptionResult, build_transcriber
 
 __all__ = [
     "ASRConfig",
+    "SherpaConfig",
     "Transcriber",
     "TranscriptionResult",
     "SimpleASRPipeline",

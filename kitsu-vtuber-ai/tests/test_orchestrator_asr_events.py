@@ -8,12 +8,14 @@ from types import ModuleType
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from libs.config import reload_app_config
 
 pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
 
 
 def test_receive_asr_event_publishes_to_broker_and_updates_state() -> None:
     async def _scenario() -> None:
+        reload_app_config()
         module = importlib.reload(importlib.import_module("apps.orchestrator.main"))
         assert isinstance(module, ModuleType)
         token, queue = await module.broker.subscribe()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import importlib
 import json
@@ -12,7 +11,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-# Garante que o pacote "api" possa ser importado via caminho relativo.
+# Ensure the "api" package is importable via a repo-relative path during tests.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,144 +31,140 @@ def telemetry_db(tmp_path, monkeypatch):
     return db_path
 
 
-def test_health_endpoint(telemetry_db):
-    async def _scenario() -> None:
-        await storage.init_db(db_path=str(telemetry_db))
-        transport = ASGITransport(app=main.app)
-        async with AsyncClient(
-            transport=transport, base_url="http://testserver", headers=API_HEADERS
-        ) as async_client:
-            response = await async_client.get("/health")
-            assert response.status_code == 200
-            assert response.json() == {"status": "ok"}
-
-    asyncio.run(_scenario())
+@pytest.mark.asyncio
+async def test_health_endpoint(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver", headers=API_HEADERS
+    ) as async_client:
+        response = await async_client.get("/health")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
 
 
-def test_event_ingest_batch_filter_and_export(telemetry_db):
-    async def _scenario() -> None:
-        await storage.init_db(db_path=str(telemetry_db))
-        transport = ASGITransport(app=main.app)
-        async with AsyncClient(
-            transport=transport, base_url="http://testserver", headers=API_HEADERS
-        ) as async_client:
-            now = datetime.now(timezone.utc).replace(microsecond=0)
-            single_event = {
+@pytest.mark.asyncio
+async def test_event_ingest_batch_filter_and_export(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver", headers=API_HEADERS
+    ) as async_client:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        single_event = {
+            "type": "emotion",
+            "ts": now.isoformat(),
+            "payload": {"mood": "happy", "intensity": 0.8},
+        }
+
+        single_response = await async_client.post("/events", json=single_event)
+        assert single_response.status_code == 200
+        assert "id" in single_response.json()
+
+        batch_payload = [
+            {
                 "type": "emotion",
-                "ts": now.isoformat(),
-                "payload": {"mood": "happy", "intensity": 0.8},
-            }
+                "ts": (now + timedelta(seconds=1)).isoformat(),
+                "payload": {"mood": "excited"},
+            },
+            {
+                "type": "status",
+                "ts": (now + timedelta(seconds=2)).isoformat(),
+                "payload": {"state": "ok"},
+            },
+        ]
 
-            single_response = await async_client.post("/events", json=single_event)
-            assert single_response.status_code == 200
-            assert "id" in single_response.json()
+        batch_response = await async_client.post("/events", json=batch_payload)
+        assert batch_response.status_code == 200
+        body = batch_response.json()
+        assert "ids" in body and len(body["ids"]) == 2
 
-            batch_payload = [
-                {
-                    "type": "emotion",
-                    "ts": (now + timedelta(seconds=1)).isoformat(),
-                    "payload": {"mood": "excited"},
-                },
-                {
-                    "type": "status",
-                    "ts": (now + timedelta(seconds=2)).isoformat(),
-                    "payload": {"state": "ok"},
-                },
+        gpu_event = {
+            "type": "hardware.gpu",
+            "ts": (now + timedelta(seconds=3)).isoformat(),
+            "payload": {
+                "index": 0,
+                "name": "Mock GPU",
+                "temperature_c": 62.0,
+                "utilization_pct": 70.0,
+                "memory_used_mb": 4096.0,
+                "memory_total_mb": 8192.0,
+                "memory_pct": 50.0,
+                "fan_speed_pct": 40.0,
+                "power_w": 150.0,
+            },
+        }
+        gpu_response = await async_client.post("/events", json=gpu_event)
+        assert gpu_response.status_code == 200
+
+        events_response = await async_client.get(
+            "/events", params={"type": "emotion", "limit": 5}
+        )
+        assert events_response.status_code == 200
+        emotion_items = events_response.json()
+        assert emotion_items
+        assert all(item["type"] == "emotion" for item in emotion_items)
+        assert all("ts" in item and "payload" in item for item in emotion_items)
+
+        legacy_filter = await async_client.get(
+            "/events", params={"event_type": "status"}
+        )
+        assert legacy_filter.status_code == 200
+        legacy_items = legacy_filter.json()
+        assert legacy_items
+        assert all(item["type"] == "status" for item in legacy_items)
+
+        export_response = await async_client.get("/events/export")
+        assert export_response.status_code == 200
+        csv_content = (await export_response.aread()).decode("utf-8")
+
+        reader = csv.reader(csv_content.splitlines())
+        rows = list(reader)
+        assert rows[0] == ["ts", "type", "json_payload"]
+
+        data_rows = rows[1:]
+        assert len(data_rows) == 4
+
+        parsed_rows = [
+            {"ts": ts, "type": event_type, "payload": json.loads(payload)}
+            for ts, event_type, payload in data_rows
+        ]
+
+        def _find_event(event_type: str, **expected_payload: object) -> None:
+            matches = [
+                row
+                for row in parsed_rows
+                if row["type"] == event_type
+                and all(row["payload"].get(key) == value for key, value in expected_payload.items())
             ]
+            assert matches, f"missing event {event_type} with payload {expected_payload}"
 
-            batch_response = await async_client.post("/events", json=batch_payload)
-            assert batch_response.status_code == 200
-            body = batch_response.json()
-            assert "ids" in body and len(body["ids"]) == 2
+        _find_event("emotion", mood="happy", intensity=0.8)
+        _find_event("emotion", mood="excited")
+        _find_event("status", state="ok")
+        _find_event(
+            "hardware.gpu",
+            index=0,
+            name="Mock GPU",
+            temperature_c=62.0,
+            utilization_pct=70.0,
+        )
 
-            gpu_event = {
-                "type": "hardware.gpu",
-                "ts": (now + timedelta(seconds=3)).isoformat(),
-                "payload": {
-                    "index": 0,
-                    "name": "Mock GPU",
-                    "temperature_c": 62.0,
-                    "utilization_pct": 70.0,
-                    "memory_used_mb": 4096.0,
-                    "memory_total_mb": 8192.0,
-                    "memory_pct": 50.0,
-                    "fan_speed_pct": 40.0,
-                    "power_w": 150.0,
-                },
-            }
-            gpu_response = await async_client.post("/events", json=gpu_event)
-            assert gpu_response.status_code == 200
+        metrics_response = await async_client.get("/metrics/latest")
+        assert metrics_response.status_code == 200
+        metrics_body = metrics_response.json()
+        assert "metrics" in metrics_body and metrics_body["metrics"]
+        gpu_metrics = metrics_body["metrics"].get("hardware.gpu")
+        assert gpu_metrics is not None
+        assert gpu_metrics["temperature_c"]["avg"] == 62.0
+        assert gpu_metrics["utilization_pct"]["avg"] == 70.0
+        assert gpu_metrics["memory_pct"]["avg"] == 50.0
 
-            events_response = await async_client.get(
-                "/events", params={"type": "emotion", "limit": 5}
-            )
-            assert events_response.status_code == 200
-            emotion_items = events_response.json()
-            assert emotion_items
-            assert all(item["type"] == "emotion" for item in emotion_items)
-            assert all("ts" in item and "payload" in item for item in emotion_items)
-
-            legacy_filter = await async_client.get(
-                "/events", params={"event_type": "status"}
-            )
-            assert legacy_filter.status_code == 200
-            legacy_items = legacy_filter.json()
-            assert legacy_items
-            assert all(item["type"] == "status" for item in legacy_items)
-
-            export_response = await async_client.get("/events/export")
-            assert export_response.status_code == 200
-            csv_content = (await export_response.aread()).decode("utf-8")
-
-            reader = csv.reader(csv_content.splitlines())
-            rows = list(reader)
-            assert rows[0] == ["ts", "type", "json_payload"]
-
-            data_rows = rows[1:]
-            assert len(data_rows) == 4
-
-            parsed_rows = [
-                {"ts": ts, "type": event_type, "payload": json.loads(payload)}
-                for ts, event_type, payload in data_rows
-            ]
-
-            def _find_event(event_type: str, **expected_payload: object) -> None:
-                matches = [
-                    row
-                    for row in parsed_rows
-                    if row["type"] == event_type
-                    and all(row["payload"].get(key) == value for key, value in expected_payload.items())
-                ]
-                assert matches, f"missing event {event_type} with payload {expected_payload}"
-
-            _find_event("emotion", mood="happy", intensity=0.8)
-            _find_event("emotion", mood="excited")
-            _find_event("status", state="ok")
-            _find_event(
-                "hardware.gpu",
-                index=0,
-                name="Mock GPU",
-                temperature_c=62.0,
-                utilization_pct=70.0,
-            )
-
-            metrics_response = await async_client.get("/metrics/latest")
-            assert metrics_response.status_code == 200
-            metrics_body = metrics_response.json()
-            assert "metrics" in metrics_body and metrics_body["metrics"]
-            gpu_metrics = metrics_body["metrics"].get("hardware.gpu")
-            assert gpu_metrics is not None
-            assert gpu_metrics["temperature_c"]["avg"] == 62.0
-            assert gpu_metrics["utilization_pct"]["avg"] == 70.0
-            assert gpu_metrics["memory_pct"]["avg"] == 50.0
-
-            prune_response = await async_client.post(
-                "/maintenance/prune", params={"max_age_seconds": 60}
-            )
-            assert prune_response.status_code == 200
-            assert "removed" in prune_response.json()
-
-    asyncio.run(_scenario())
+        prune_response = await async_client.post(
+            "/maintenance/prune", params={"max_age_seconds": 60}
+        )
+        assert prune_response.status_code == 200
+        assert "removed" in prune_response.json()
 
 
 def test_uvicorn_import(telemetry_db, monkeypatch):
@@ -178,108 +173,100 @@ def test_uvicorn_import(telemetry_db, monkeypatch):
     assert hasattr(module, "app")
 
 
-def test_storage_export_helper(telemetry_db):
-    async def _scenario() -> None:
-        await storage.init_db(db_path=str(telemetry_db))
-        await storage.insert_event(
-            storage.TelemetryEvent(
-                type="ping",
-                ts=datetime.now(timezone.utc).isoformat(),
-                payload={"ok": True},
-                source="bot",
-            ),
-            db_path=str(telemetry_db),
+@pytest.mark.asyncio
+async def test_storage_export_helper(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    await storage.insert_event(
+        storage.TelemetryEvent(
+            type="ping",
+            ts=datetime.now(timezone.utc).isoformat(),
+            payload={"ok": True},
+            source="bot",
+        ),
+        db_path=str(telemetry_db),
+    )
+    csv_content = await storage.export_events(db_path=str(telemetry_db))
+    assert "ts,type,json_payload" in csv_content
+    assert "ping" in csv_content
+    assert '"ok"' in csv_content and "true" in csv_content
+
+
+@pytest.mark.asyncio
+async def test_requires_api_key(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
+        response = await insecure_client.get("/events")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_repeated_requests_without_api_key(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
+        first_response = await insecure_client.get("/events")
+        assert first_response.status_code == 401
+        assert first_response.json() == {"detail": "Invalid API key"}
+
+        second_response = await insecure_client.get("/events")
+        assert second_response.status_code == 401
+        assert second_response.json() == {"detail": "Invalid API key"}
+
+
+@pytest.mark.asyncio
+async def test_log_listing_endpoint(telemetry_db, tmp_path, monkeypatch):
+    monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path))
+    await storage.init_db(db_path=str(telemetry_db))
+
+    log_file = tmp_path / "policy_worker.log"
+    now = datetime.now(timezone.utc)
+    lines = [
+        json.dumps(
+            {
+                "ts": now.isoformat(),
+                "service": "policy_worker",
+                "level": "info",
+                "message": "Policy warmup complete",
+                "logger": "kitsu.policy",
+            }
+        ),
+        json.dumps(
+            {
+                "ts": (now + timedelta(seconds=5)).isoformat(),
+                "service": "policy_worker",
+                "level": "error",
+                "message": "Ollama request failed: timeout",
+                "logger": "kitsu.policy",
+                "extra": {"request_id": "abc123"},
+            }
+        ),
+    ]
+    log_file.write_text("\n".join(lines), encoding="utf-8")
+
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver", headers=API_HEADERS
+    ) as async_client:
+        latest_response = await async_client.get(
+            "/logs", params={"service": "policy_worker", "limit": 5}
         )
-        csv_content = await storage.export_events(db_path=str(telemetry_db))
-        assert "ts,type,json_payload" in csv_content
-        assert "ping" in csv_content
-        assert '"ok"' in csv_content and "true" in csv_content
+        assert latest_response.status_code == 200
+        payload = latest_response.json()
+        assert len(payload) == 2
+        assert payload[0]["message"] == "Ollama request failed: timeout"
+        assert payload[0]["extra"] == {"request_id": "abc123"}
 
-    asyncio.run(_scenario())
-
-
-def test_requires_api_key(telemetry_db):
-    async def _scenario() -> None:
-        await storage.init_db(db_path=str(telemetry_db))
-        transport = ASGITransport(app=main.app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
-            response = await insecure_client.get("/events")
-        assert response.status_code == 401
-
-    asyncio.run(_scenario())
-
-
-def test_repeated_requests_without_api_key(telemetry_db):
-    async def _scenario() -> None:
-        await storage.init_db(db_path=str(telemetry_db))
-        transport = ASGITransport(app=main.app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
-            first_response = await insecure_client.get("/events")
-            assert first_response.status_code == 401
-            assert first_response.json() == {"detail": "Invalid API key"}
-
-            second_response = await insecure_client.get("/events")
-            assert second_response.status_code == 401
-            assert second_response.json() == {"detail": "Invalid API key"}
-
-    asyncio.run(_scenario())
-
-
-def test_log_listing_endpoint(telemetry_db, tmp_path, monkeypatch):
-    async def _scenario() -> None:
-        monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path))
-        await storage.init_db(db_path=str(telemetry_db))
-
-        log_file = tmp_path / "policy_worker.log"
-        now = datetime.now(timezone.utc)
-        lines = [
-            json.dumps(
-                {
-                    "ts": now.isoformat(),
-                    "service": "policy_worker",
-                    "level": "info",
-                    "message": "Policy warmup complete",
-                    "logger": "kitsu.policy",
-                }
-            ),
-            json.dumps(
-                {
-                    "ts": (now + timedelta(seconds=5)).isoformat(),
-                    "service": "policy_worker",
-                    "level": "error",
-                    "message": "Ollama request failed: timeout",
-                    "logger": "kitsu.policy",
-                    "extra": {"request_id": "abc123"},
-                }
-            ),
-        ]
-        log_file.write_text("\n".join(lines), encoding="utf-8")
-
-        transport = ASGITransport(app=main.app)
-        async with AsyncClient(
-            transport=transport, base_url="http://testserver", headers=API_HEADERS
-        ) as async_client:
-            latest_response = await async_client.get(
-                "/logs", params={"service": "policy_worker", "limit": 5}
-            )
-            assert latest_response.status_code == 200
-            payload = latest_response.json()
-            assert len(payload) == 2
-            assert payload[0]["message"] == "Ollama request failed: timeout"
-            assert payload[0]["extra"] == {"request_id": "abc123"}
-
-            filter_response = await async_client.get(
-                "/logs",
-                params={
-                    "service": "policy_worker",
-                    "level": "info",
-                    "contains": "warmup",
-                    "order": "asc",
-                },
-            )
-            assert filter_response.status_code == 200
-            filtered = filter_response.json()
-            assert len(filtered) == 1
-            assert filtered[0]["message"] == "Policy warmup complete"
-
-    asyncio.run(_scenario())
+        filter_response = await async_client.get(
+            "/logs",
+            params={
+                "service": "policy_worker",
+                "level": "info",
+                "contains": "warmup",
+                "order": "asc",
+            },
+        )
+        assert filter_response.status_code == 200
+        filtered = filter_response.json()
+        assert len(filtered) == 1
+        assert filtered[0]["message"] == "Policy warmup complete"

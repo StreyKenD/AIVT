@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Kitsu Overlay</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background-color: rgba(0, 0, 0, 0);
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: #ffffff;
+      overflow: hidden;
+    }
+
+    #container {
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 3rem 2rem;
+      background: linear-gradient(180deg, rgba(10, 11, 17, 0.0) 0%, rgba(10, 11, 17, 0.55) 75%, rgba(10, 11, 17, 0.75) 100%);
+    }
+
+    #subtitle {
+      max-width: 70vw;
+      text-align: center;
+      font-size: 2rem;
+      line-height: 1.4;
+      padding: 1.1rem 1.6rem;
+      border-radius: 1.6rem;
+      background: rgba(15, 18, 27, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.4);
+      text-shadow: 0 0 12px rgba(0, 0, 0, 0.8);
+      transition: opacity 0.25s ease;
+    }
+
+    #subtitle.hidden {
+      opacity: 0.1;
+    }
+
+    #status {
+      position: absolute;
+      top: 1rem;
+      right: 1.5rem;
+      padding: 0.4rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+  </style>
+</head>
+<body>
+  <div id="status">CONNECTING</div>
+  <div id="container">
+    <div id="subtitle" class="hidden">Waiting for Kitsu...</div>
+  </div>
+  <script>
+    (function () {
+      const subtitle = document.getElementById("subtitle");
+      const statusEl = document.getElementById("status");
+      let websocket = null;
+      let reconnectHandle = null;
+      let fadeHandle = null;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function decodeEntities(value) {
+        const textarea = document.createElement("textarea");
+        textarea.innerHTML = value;
+        return textarea.value;
+      }
+
+      function extractSpeech(content) {
+        if (!content) {
+          return "";
+        }
+        const match = content.match(/<speech>([\s\S]*?)<\/speech>/i);
+        if (match) {
+          return decodeEntities(match[1].trim());
+        }
+        const stripped = content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        return decodeEntities(stripped);
+      }
+
+      function showSubtitle(text) {
+        if (!text) {
+          subtitle.textContent = "Kitsu is quiet...";
+          subtitle.classList.add("hidden");
+          return;
+        }
+        subtitle.textContent = text;
+        subtitle.classList.remove("hidden");
+        if (fadeHandle) {
+          clearTimeout(fadeHandle);
+        }
+        fadeHandle = setTimeout(() => {
+          subtitle.classList.add("hidden");
+        }, 11000);
+      }
+
+      function scheduleReconnect() {
+        if (reconnectHandle !== null) {
+          return;
+        }
+        reconnectHandle = setTimeout(() => {
+          reconnectHandle = null;
+          connect();
+        }, 2000);
+      }
+
+      function connect() {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          return;
+        }
+        setStatus("CONNECTING");
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        websocket = new WebSocket(protocol + "//" + window.location.host + "/stream");
+
+        websocket.addEventListener("open", () => {
+          setStatus("ONLINE");
+        });
+
+        websocket.addEventListener("close", () => {
+          setStatus("OFFLINE");
+          scheduleReconnect();
+        });
+
+        websocket.addEventListener("error", () => {
+          setStatus("OFFLINE");
+          scheduleReconnect();
+        });
+
+        websocket.addEventListener("message", (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === "policy.final") {
+              const content = message.payload?.content || "";
+              const speech = extractSpeech(content);
+              showSubtitle(speech);
+            }
+          } catch (error) {
+            console.error("Overlay parse error", error);
+          }
+        });
+      }
+
+      connect();
+    })();
+  </script>
+</body>
+</html>

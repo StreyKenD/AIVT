@@ -5,16 +5,31 @@ import html
 import inspect
 import json
 import logging
-import os
 import random
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Literal
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import httpx
+import yaml
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field, validator
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+from libs.contracts import (
+    ASRFinalEvent,
+    ASREventPayload,
+    ChatIngestCommand,
+    ModuleToggleCommand,
+    MuteCommand,
+    OBSSceneCommand,
+    PanicCommand,
+    PersonaUpdateCommand,
+    PresetCommand,
+    TTSRequestPayload,
+    VTSExpressionCommand,
+)
 
 try:  # pragma: no cover - fallback for environments without tenacity
     from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
@@ -26,6 +41,7 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional depend
     )
 
 from libs.common import configure_json_logging
+from libs.config import PersonaPreset, PersonaSettings, get_app_config
 from libs.memory import MemoryController, MemorySummary
 from libs.telemetry import TelemetryClient
 from libs.telemetry.gpu import GPUMonitor
@@ -34,13 +50,16 @@ from libs.telemetry.gpu import GPUMonitor
 configure_json_logging("orchestrator")
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POLICY_URL = (
-    f"http://{os.getenv('POLICY_HOST', '127.0.0.1')}:{os.getenv('POLICY_PORT', '8081')}"
-)
-POLICY_URL = os.getenv("POLICY_URL", _DEFAULT_POLICY_URL)
-POLICY_TIMEOUT_SECONDS = float(os.getenv("POLICY_TIMEOUT_SECONDS", "40"))
-TTS_API_URL = os.getenv("TTS_API_URL", "http://127.0.0.1:8070")
-TTS_TIMEOUT_SECONDS = float(os.getenv("TTS_TIMEOUT_SECONDS", "60"))
+settings = get_app_config()
+orchestrator_cfg = settings.orchestrator
+memory_cfg = settings.memory
+persona_cfg = settings.persona
+WEB_UI_ROOT = Path(__file__).resolve().parent / "webui"
+
+POLICY_URL = orchestrator_cfg.policy_url
+POLICY_TIMEOUT_SECONDS = orchestrator_cfg.policy_timeout_seconds
+TTS_API_URL = orchestrator_cfg.tts_url
+TTS_TIMEOUT_SECONDS = orchestrator_cfg.tts_timeout_seconds
 _SPEECH_PATTERN = re.compile(r"<speech>(.*?)</speech>", re.IGNORECASE | re.DOTALL)
 
 _policy_client: Optional[httpx.AsyncClient] = None
@@ -110,98 +129,12 @@ class PersonaState:
         self.last_updated = time.time()
 
 
-class PersonaUpdate(BaseModel):
-    style: Optional[str] = Field(
-        None, description="Persona style, e.g. kawaii or chaotic"
+class ManualChatRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="User message to send to the AI.")
+    play_tts: bool = Field(
+        True,
+        description="Whether the orchestrator should trigger TTS playback for the response.",
     )
-    chaos_level: Optional[float] = Field(None, ge=0.0, le=1.0)
-    energy: Optional[float] = Field(None, ge=0.0, le=1.0)
-    family_mode: Optional[bool] = Field(
-        None, description="Family friendly moderation flag"
-    )
-
-    @validator("style")
-    def validate_style(cls, value: Optional[str]) -> Optional[str]:  # noqa: D417
-        if value is None:
-            return value
-        allowed = {"kawaii", "chaotic", "calm"}
-        if value not in allowed:
-            raise ValueError(f"Unsupported persona style: {value}")
-        return value
-
-
-class ModuleToggleRequest(BaseModel):
-    enabled: bool
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    voice: Optional[str] = Field(None, description="Preferred voice identifier")
-
-
-class OBSSceneRequest(BaseModel):
-    scene: str = Field(..., min_length=1)
-
-
-class VTSExpressionRequest(BaseModel):
-    expression: str = Field(..., min_length=1)
-    intensity: Optional[float] = Field(0.6, ge=0.0, le=1.0)
-
-
-class ChatIngestRequest(BaseModel):
-    role: str = Field("user", description="speaker role: user|assistant|system")
-    text: str = Field(..., min_length=1)
-
-    @validator("role")
-    def validate_role(cls, value: str) -> str:  # noqa: D417
-        allowed = {"user", "assistant", "system"}
-        if value not in allowed:
-            raise ValueError("Invalid role")
-        return value
-
-
-class ASREvent(BaseModel):
-    type: Literal["asr_partial", "asr_final"]
-    segment: int = Field(..., ge=0)
-    text: str = Field(..., min_length=1)
-    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
-    language: Optional[str] = Field(None, min_length=1)
-    started_at: float = Field(..., ge=0.0)
-    ended_at: float = Field(..., ge=0.0)
-    latency_ms: Optional[float] = Field(None, ge=0.0)
-    duration_ms: Optional[float] = Field(None, ge=0.0)
-
-    @validator("ended_at")
-    def validate_timestamps(
-        cls, value: float, values: Dict[str, Any]
-    ) -> float:  # noqa: D417
-        started_at = values.get("started_at")
-        if started_at is not None and value < started_at:
-            raise ValueError("ended_at must be greater than or equal to started_at")
-        return value
-
-
-class PanicRequest(BaseModel):
-    reason: Optional[str] = Field(
-        None,
-        description="Optional reason for triggering panic",
-        max_length=240,
-    )
-
-
-class MuteRequest(BaseModel):
-    muted: bool = Field(..., description="Indicates whether TTS should remain muted")
-
-
-class PresetRequest(BaseModel):
-    preset: str = Field(..., min_length=1, description="Preset identifier")
-
-    @validator("preset")
-    def validate_preset(cls, value: str) -> str:  # noqa: D417
-        allowed = set(OrchestratorState._PRESETS.keys())  # type: ignore[attr-defined]
-        if value not in allowed:
-            raise ValueError(f"Unknown preset: {value}")
-        return value
 
 
 class TelemetryPublisher:
@@ -323,29 +256,35 @@ class EventBroker:
 class OrchestratorState:
     """Holds runtime state for the orchestrator and synthesizes status payloads."""
 
-    _PRESETS: Dict[str, Dict[str, Any]] = {
-        "default": {
-            "style": "kawaii",
-            "chaos_level": 0.2,
-            "energy": 0.5,
-            "family_mode": True,
-        },
-        "cozy": {
-            "style": "calm",
-            "chaos_level": 0.15,
-            "energy": 0.35,
-            "family_mode": True,
-        },
-        "hype": {
-            "style": "chaotic",
-            "chaos_level": 0.75,
-            "energy": 0.85,
-            "family_mode": True,
-        },
-    }
-
-    def __init__(self, broker: EventBroker, memory: MemoryController) -> None:
-        self.persona = PersonaState()
+    def __init__(
+        self,
+        broker: EventBroker,
+        memory: MemoryController,
+        persona_presets: Dict[str, PersonaPreset],
+        default_preset: str,
+    ) -> None:
+        self._persona_presets = persona_presets
+        self.available_presets = sorted(self._persona_presets.keys())
+        if default_preset not in self._persona_presets:
+            if self.available_presets:
+                default_preset = self.available_presets[0]
+            else:
+                fallback = PersonaPreset()
+                self._persona_presets = {"default": fallback}
+                self.available_presets = ["default"]
+                default_preset = "default"
+        base_preset = self._persona_presets[default_preset]
+        self.persona = PersonaState(
+            style=base_preset.style,
+            chaos_level=base_preset.chaos_level,
+            energy=base_preset.energy,
+            family_mode=base_preset.family_mode,
+        )
+        self._persona_prompts = {
+            name: preset.system_prompt
+            for name, preset in self._persona_presets.items()
+            if preset.system_prompt
+        }
         self.modules: Dict[str, ModuleState] = {
             module: ModuleState(module)
             for module in (
@@ -369,12 +308,16 @@ class OrchestratorState:
         self.tts_muted = False
         self.panic_triggered_at: Optional[float] = None
         self.panic_reason: Optional[str] = None
-        self.active_preset = "default"
+        self.active_preset = default_preset
 
     def snapshot(self) -> Dict[str, Any]:
         return {
             "status": "ok",
             "persona": self.persona.snapshot(),
+            "persona_presets": {
+                "active": self.active_preset,
+                "available": self.available_presets,
+            },
             "modules": {
                 name: module.snapshot() for name, module in self.modules.items()
             },
@@ -411,7 +354,21 @@ class OrchestratorState:
         await self._broker.publish(payload)
         return payload
 
-    async def update_persona(self, payload: PersonaUpdate) -> Dict[str, Any]:
+    def _resolve_preset(self, name: str) -> PersonaPreset:
+        try:
+            return self._persona_presets[name]
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            available = ", ".join(self.available_presets) or "<none>"
+            raise ValueError(f"Unknown preset: {name}. Available: {available}") from exc
+
+    async def _apply_persona_update(
+        self,
+        payload: PersonaUpdateCommand,
+        *,
+        preset_name: Optional[str],
+        announce: bool = True,
+        log_turn: bool = True,
+    ) -> Dict[str, Any]:
         async with self._lock:
             self.persona.update(
                 style=payload.style,
@@ -419,15 +376,38 @@ class OrchestratorState:
                 energy=payload.energy,
                 family_mode=payload.family_mode,
             )
-            snapshot = {"type": "persona_update", "persona": self.persona.snapshot()}
-        await self._broker.publish(snapshot)
-        await self.record_turn(
-            "system",
-            f"Persona updated to {self.persona.style} (chaos={self.persona.chaos_level:.2f})",
-        )
+            if preset_name is not None:
+                self.active_preset = preset_name
+            elif any(
+                value is not None
+                for value in (
+                    payload.style,
+                    payload.chaos_level,
+                    payload.energy,
+                    payload.family_mode,
+                )
+            ):
+                self.active_preset = "custom"
+            snapshot = {
+                "type": "persona_update",
+                "persona": self.persona.snapshot(),
+                "active_preset": self.active_preset,
+            }
+        if announce:
+            await self._broker.publish(snapshot)
+        if log_turn:
+            await self.record_turn(
+                "system",
+                f"Persona updated to {self.persona.style} (chaos={self.persona.chaos_level:.2f})",
+            )
         return snapshot
 
-    async def record_tts(self, request: TTSRequest) -> Dict[str, Any]:
+    async def update_persona(self, payload: PersonaUpdateCommand) -> Dict[str, Any]:
+        if payload.preset:
+            return await self.apply_preset(payload.preset)
+        return await self._apply_persona_update(payload, preset_name=None)
+
+    async def record_tts(self, request: TTSRequestPayload) -> Dict[str, Any]:
         async with self._lock:
             self.last_tts_request = {
                 "text": request.text,
@@ -450,17 +430,34 @@ class OrchestratorState:
         state.latency_ms = max(1.0, float(latency_ms))
         state.last_updated = time.time()
 
-    async def handle_asr_final(self, payload: Dict[str, Any]) -> None:
-        text = (payload.get("text") or "").strip()
+    async def handle_asr_final(self, event: ASREventPayload) -> None:
+        if event.type != "asr_final":
+            return
+        final_event = cast(ASRFinalEvent, event)
+        text = final_event.text.strip()
         if not text:
             return
         try:
-            await self._process_asr_final(text, payload)
+            await self._process_asr_final(text, final_event)
         except Exception:  # pragma: no cover - defensive guard
             logger.exception("Failed to process ASR final payload")
 
-    async def _process_asr_final(self, text: str, payload: Dict[str, Any]) -> None:
+    async def _process_asr_final(self, text: str, _event: ASRFinalEvent) -> None:
         await self.record_turn("user", text)
+        await self._run_policy_pipeline(text, synthesize=not self.tts_muted)
+
+    async def process_manual_prompt(
+        self, text: str, *, synthesize: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        clean = text.strip()
+        if not clean:
+            return None
+        await self.record_turn("user", clean)
+        return await self._run_policy_pipeline(clean, synthesize=synthesize)
+
+    async def _run_policy_pipeline(
+        self, text: str, *, synthesize: bool = True
+    ) -> Optional[Dict[str, Any]]:
         request_body = self._build_policy_request(text)
         start = time.perf_counter()
         final_payload = await _invoke_policy(request_body, self._broker)
@@ -468,18 +465,19 @@ class OrchestratorState:
         self._mark_module_latency("policy_worker", latency_ms)
         if final_payload is None:
             logger.warning("Policy worker returned no final payload for request")
-            return
+            return None
+
         await self._broker.publish({"type": "policy.final", "payload": final_payload})
 
         speech_content = _extract_speech(final_payload.get("content", ""))
         if not speech_content:
             speech_content = (final_payload.get("content") or "").strip()
         if not speech_content:
-            return
+            return final_payload
 
-        if self.tts_muted:
+        if not synthesize or self.tts_muted:
             await self.record_turn("assistant", speech_content)
-            return
+            return final_payload
 
         tts_start = time.perf_counter()
         tts_result = await _invoke_tts(
@@ -494,7 +492,10 @@ class OrchestratorState:
         voice_hint = None
         if isinstance(tts_result, dict):
             voice_hint = tts_result.get("voice")
-        await self.record_tts(TTSRequest(text=speech_content, voice=voice_hint))
+        await self.record_tts(
+            TTSRequestPayload(text=speech_content, voice=voice_hint)
+        )
+        return final_payload
 
     def _build_policy_request(self, text: str) -> Dict[str, Any]:
         persona = self.persona.snapshot()
@@ -505,6 +506,9 @@ class OrchestratorState:
             "energy": persona["energy"],
             "family_friendly": persona["family_mode"],
         }
+        persona_prompt = self._persona_prompts.get(self.active_preset)
+        if persona_prompt:
+            payload["persona_prompt"] = persona_prompt
         if self.last_summary:
             payload["memory_summary"] = self.last_summary.summary_text
         recent_turns = [
@@ -523,7 +527,7 @@ class OrchestratorState:
         return payload
 
     async def update_expression(
-        self, expression: VTSExpressionRequest
+        self, expression: VTSExpressionCommand
     ) -> Dict[str, Any]:
         async with self._lock:
             self.last_expression = {
@@ -570,25 +574,21 @@ class OrchestratorState:
         return payload
 
     async def apply_preset(self, preset: str) -> Dict[str, Any]:
-        try:
-            config = self._PRESETS[preset]
-        except KeyError as exc:  # pragma: no cover - defensive guard
-            raise ValueError(f"Unknown preset: {preset}") from exc
-
-        persona_update = PersonaUpdate(
-            style=config["style"],
-            chaos_level=config["chaos_level"],
-            energy=config["energy"],
-            family_mode=config.get("family_mode"),
+        config = self._resolve_preset(preset)
+        persona_update = PersonaUpdateCommand(
+            style=config.style,
+            chaos_level=config.chaos_level,
+            energy=config.energy,
+            family_mode=config.family_mode,
         )
-        await self.update_persona(persona_update)
-        async with self._lock:
-            self.active_preset = preset
-            payload = {
-                "type": "control.preset",
-                "preset": preset,
-                "ts": time.time(),
-            }
+        await self._apply_persona_update(
+            persona_update, preset_name=preset, announce=True
+        )
+        payload = {
+            "type": "control.preset",
+            "preset": preset,
+            "ts": time.time(),
+        }
         await self._broker.publish(payload)
         return payload
 
@@ -681,17 +681,74 @@ def _extract_speech(content: Optional[str]) -> str:
     return value.strip()
 
 
-memory_controller = MemoryController()
+def _load_web_asset(filename: str) -> str:
+    path = WEB_UI_ROOT / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Page not found")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - defensive guard
+        logger.error("Failed to read web asset %s: %s", path, exc)
+        raise HTTPException(status_code=500, detail="Unable to load asset") from exc
+
+
+def _load_persona_presets(config: PersonaSettings) -> Dict[str, PersonaPreset]:
+    presets: Dict[str, PersonaPreset] = {}
+    for name, preset in config.presets.items():
+        if isinstance(preset, PersonaPreset):
+            presets[name] = preset
+        else:
+            presets[name] = PersonaPreset.model_validate(preset)
+    if config.presets_file:
+        preset_path = Path(config.presets_file).expanduser()
+        try:
+            raw = preset_path.read_text(encoding="utf-8")
+            loaded = yaml.safe_load(raw) or {}
+            if isinstance(loaded, dict):
+                for name, values in loaded.items():
+                    try:
+                        presets[name] = PersonaPreset.model_validate(values)
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        logger.warning("Skipping persona preset %s: %s", name, exc)
+        except FileNotFoundError:
+            logger.warning("Persona presets file %s not found", preset_path)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to load persona presets file %s: %s", preset_path, exc
+            )
+    return presets
+
+
+memory_controller = MemoryController(
+    buffer_size=memory_cfg.buffer_size,
+    summary_interval=memory_cfg.summary_interval,
+    history_path=Path(memory_cfg.history_path).expanduser(),
+)
 telemetry = TelemetryPublisher(
-    os.getenv("TELEMETRY_API_URL"),
-    api_key=os.getenv("TELEMETRY_API_KEY"),
+    orchestrator_cfg.telemetry_url,
+    api_key=orchestrator_cfg.telemetry_api_key,
     source="orchestrator",
 )
 broker = EventBroker(telemetry)
-state = OrchestratorState(broker, memory_controller)
+persona_presets = _load_persona_presets(persona_cfg)
+state = OrchestratorState(
+    broker,
+    memory_controller,
+    persona_presets=persona_presets,
+    default_preset=persona_cfg.default,
+)
+gpu_telemetry = (
+    TelemetryClient(
+        orchestrator_cfg.telemetry_url,
+        api_key=orchestrator_cfg.telemetry_api_key,
+        service="orchestrator.gpu",
+    )
+    if orchestrator_cfg.telemetry_url
+    else None
+)
 gpu_monitor = GPUMonitor(
-    TelemetryClient.from_env(service="orchestrator.gpu"),
-    interval_seconds=float(os.getenv("GPU_METRICS_INTERVAL_SECONDS", "30")),
+    gpu_telemetry,
+    interval_seconds=orchestrator_cfg.gpu_metrics_interval_seconds,
 )
 app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 
@@ -699,8 +756,8 @@ app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 @app.on_event("startup")
 async def on_startup() -> None:
     global _policy_client, _tts_client
-    restore_flag = os.getenv("RESTORE_CONTEXT", "false").lower() in {"1", "true", "yes"}
-    restore_window = float(os.getenv("MEMORY_RESTORE_WINDOW_SECONDS", "7200"))
+    restore_flag = memory_cfg.restore_context
+    restore_window = memory_cfg.restore_window_seconds
     await telemetry.startup()
     if _policy_client is None:
         _policy_client = httpx.AsyncClient(
@@ -735,6 +792,11 @@ async def get_state() -> OrchestratorState:
     return state
 
 
+@app.get("/health")
+async def health() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/status")
 async def get_status(
     orchestrator: OrchestratorState = Depends(get_state),
@@ -745,7 +807,7 @@ async def get_status(
 @app.post("/toggle/{module}")
 async def toggle_module(
     module: str,
-    payload: ModuleToggleRequest,
+    payload: ModuleToggleCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     try:
@@ -758,7 +820,7 @@ async def toggle_module(
 
 @app.post("/persona")
 async def update_persona(
-    payload: PersonaUpdate,
+    payload: PersonaUpdateCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.update_persona(payload)
@@ -766,7 +828,7 @@ async def update_persona(
 
 @app.post("/tts")
 async def request_tts(
-    payload: TTSRequest,
+    payload: TTSRequestPayload,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.record_tts(payload)
@@ -774,7 +836,7 @@ async def request_tts(
 
 @app.post("/obs/scene")
 async def set_obs_scene(
-    payload: OBSSceneRequest,
+    payload: OBSSceneCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.update_scene(payload.scene)
@@ -782,7 +844,7 @@ async def set_obs_scene(
 
 @app.post("/vts/expr")
 async def set_vts_expression(
-    payload: VTSExpressionRequest,
+    payload: VTSExpressionCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.update_expression(payload)
@@ -790,7 +852,7 @@ async def set_vts_expression(
 
 @app.post("/ingest/chat")
 async def ingest_chat(
-    payload: ChatIngestRequest,
+    payload: ChatIngestCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     summary_payload = await orchestrator.record_turn(payload.role, payload.text)
@@ -800,13 +862,37 @@ async def ingest_chat(
     }
 
 
+@app.post("/chat/respond")
+async def respond_via_chat(
+    payload: ManualChatRequest,
+    orchestrator: OrchestratorState = Depends(get_state),
+) -> Dict[str, Any]:
+    result = await orchestrator.process_manual_prompt(
+        payload.text, synthesize=payload.play_tts
+    )
+    if result is None:
+        raise HTTPException(status_code=202, detail="No response generated yet")
+    return {"status": "ok", "payload": result}
+
+
+@app.get("/webui/chat", response_class=HTMLResponse)
+async def chat_console() -> HTMLResponse:
+    return HTMLResponse(_load_web_asset("chat.html"))
+
+
+@app.get("/webui/overlay", response_class=HTMLResponse)
+async def overlay_page() -> HTMLResponse:
+    return HTMLResponse(_load_web_asset("overlay.html"))
+
+
 @app.post("/events/asr")
 async def receive_asr_event(
-    payload: ASREvent,
+    payload: ASREventPayload,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     body = payload.dict()
-    event_type = body.pop("type")
+    event_type = payload.type
+    body.pop("type", None)
     message = {"type": event_type, "payload": body}
     await broker.publish(message)
     module = orchestrator.modules.get("asr_worker")
@@ -816,13 +902,13 @@ async def receive_asr_event(
             module.latency_ms = max(1.0, float(metric))
         module.last_updated = time.time()
     if event_type == "asr_final":
-        asyncio.create_task(orchestrator.handle_asr_final(body))
+        asyncio.create_task(orchestrator.handle_asr_final(payload))
     return {"status": "accepted"}
 
 
 @app.post("/control/panic")
 async def trigger_panic(
-    payload: PanicRequest,
+    payload: PanicCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.trigger_panic(payload.reason)
@@ -830,7 +916,7 @@ async def trigger_panic(
 
 @app.post("/control/mute")
 async def toggle_mute(
-    payload: MuteRequest,
+    payload: MuteCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     return await orchestrator.set_mute(payload.muted)
@@ -838,7 +924,7 @@ async def toggle_mute(
 
 @app.post("/control/preset")
 async def apply_preset(
-    payload: PresetRequest,
+    payload: PresetCommand,
     orchestrator: OrchestratorState = Depends(get_state),
 ) -> Dict[str, Any]:
     try:

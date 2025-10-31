@@ -4,7 +4,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import aiosqlite
 
@@ -13,7 +13,7 @@ import aiosqlite
 class MemorySummary:
     summary_text: str
     mood_state: str
-    knobs: Dict[str, float]
+    metadata: Dict[str, Any]
     ts: float
     id: Optional[int] = None
 
@@ -22,7 +22,7 @@ class MemorySummary:
             "id": self.id,
             "summary_text": self.summary_text,
             "mood_state": self.mood_state,
-            "knobs": self.knobs,
+            "metadata": self.metadata,
             "ts": self.ts,
         }
 
@@ -55,7 +55,7 @@ class MemoryStore:
                     summary.ts,
                     summary.summary_text,
                     summary.mood_state,
-                    json.dumps(summary.knobs),
+                    json.dumps(summary.metadata),
                 ),
             )
             await db.commit()
@@ -73,11 +73,11 @@ class MemoryStore:
             row = await cursor.fetchone()
             if row is None:
                 return None
-            knobs = json.loads(row["knobs"]) if row["knobs"] else {}
+            metadata = json.loads(row["knobs"]) if row["knobs"] else {}
             return MemorySummary(
                 id=row["id"],
                 ts=row["ts"],
                 summary_text=row["summary_text"],
                 mood_state=row["mood_state"],
-                knobs={k: float(v) for k, v in knobs.items()},
+                metadata=metadata if isinstance(metadata, dict) else {},
             )

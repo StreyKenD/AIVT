@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Iterable, List
+from typing import Any, Deque, Dict, Iterable, List
 
 
 @dataclass
@@ -15,6 +15,17 @@ class MemoryTurn:
     @classmethod
     def create(cls, role: str, text: str) -> "MemoryTurn":
         return cls(role=role, text=text, ts=time.time())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"role": self.role, "text": self.text, "ts": self.ts}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MemoryTurn":
+        return cls(
+            role=data.get("role", "user"),
+            text=str(data.get("text", "")),
+            ts=float(data.get("ts", time.time())),
+        )
 
 
 class ConversationRingBuffer:

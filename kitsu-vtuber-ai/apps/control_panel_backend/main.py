@@ -9,7 +9,8 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi import status as http_status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+
+from libs.contracts import MuteCommand, PanicCommand, PresetCommand
 
 from libs.common import configure_json_logging
 
@@ -23,22 +24,6 @@ _REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 configure_json_logging("control_panel_backend")
 logger = logging.getLogger("kitsu.control_panel")
-
-
-class PanicIn(BaseModel):
-    reason: str | None = Field(
-        None,
-        description="Optional reason to share with the team",
-        max_length=240,
-    )
-
-
-class MuteIn(BaseModel):
-    muted: bool = Field(..., description="Indicates whether TTS should remain muted")
-
-
-class PresetIn(BaseModel):
-    preset: str = Field(..., min_length=1, description="Preset identifier")
 
 
 class ControlPanelGateway:
@@ -187,7 +172,7 @@ async def telemetry_export(
     status_code=http_status.HTTP_202_ACCEPTED,
 )
 async def control_panic(
-    payload: PanicIn,
+    payload: PanicCommand,
     gateway: ControlPanelGateway = Depends(get_gateway),
 ) -> Dict[str, Any]:
     return await gateway.orchestrator_post("/control/panic", payload.dict())
@@ -195,7 +180,7 @@ async def control_panic(
 
 @app.post("/control/mute", response_model=Dict[str, Any])
 async def control_mute(
-    payload: MuteIn,
+    payload: MuteCommand,
     gateway: ControlPanelGateway = Depends(get_gateway),
 ) -> Dict[str, Any]:
     return await gateway.orchestrator_post("/control/mute", payload.dict())
@@ -203,7 +188,7 @@ async def control_mute(
 
 @app.post("/control/preset", response_model=Dict[str, Any])
 async def control_preset(
-    payload: PresetIn,
+    payload: PresetCommand,
     gateway: ControlPanelGateway = Depends(get_gateway),
 ) -> Dict[str, Any]:
     return await gateway.orchestrator_post("/control/preset", payload.dict())

@@ -64,6 +64,9 @@
     tts_worker: []
   };
   const LATENCY_MAX_POINTS = 24;
+  const METRIC_POLL_INTERVAL_MS = 5000;
+  const SOAK_POLL_INTERVAL_MS = 20000;
+  const FEEDBACK_TIMEOUT_MS = 5000;
   const latencyColors: Record<string, string> = {
     asr_worker: '#60a5fa',
     policy_worker: '#facc15',
@@ -105,26 +108,44 @@
 
   let metricsTimer: ReturnType<typeof setInterval> | null = null;
   let soakTimer: ReturnType<typeof setInterval> | null = null;
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let componentDestroyed = false;
+  let pollingPaused = false;
 
   onMount(() => {
+    componentDestroyed = false;
     const unsubscribe = telemetry.subscribe(handleTelemetry);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        pausePolling();
+      } else {
+        resumePolling(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     void fetchStatus(true);
     void refreshMetrics(true);
     void refreshSoak(true);
-    metricsTimer = setInterval(() => void refreshMetrics(false), 5000);
-    soakTimer = setInterval(() => void refreshSoak(false), 20000);
+    resumePolling();
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribe();
       telemetry.disconnect();
-      if (metricsTimer) clearInterval(metricsTimer);
-      if (soakTimer) clearInterval(soakTimer);
+      pausePolling();
     };
   });
 
   onDestroy(() => {
-    if (metricsTimer) clearInterval(metricsTimer);
-    if (soakTimer) clearInterval(soakTimer);
+    componentDestroyed = true;
+    pausePolling();
+    if (feedbackTimer) {
+      clearTimeout(feedbackTimer);
+      feedbackTimer = null;
+    }
   });
 
   async function fetchStatus(initial = false, showNotice = false) {
@@ -137,13 +158,16 @@
 
     try {
       const snapshot = await getStatus();
+      if (componentDestroyed) return;
       applySnapshot(snapshot);
       if (showNotice) {
         setFeedback('success', 'Status updated.');
       }
     } catch (error) {
+      if (componentDestroyed) return;
       loadError = getErrorMessage(error, 'Failed to load orchestrator status.');
     } finally {
+      if (componentDestroyed) return;
       if (initial) {
         loadingStatus = false;
       } else {
@@ -154,10 +178,17 @@
 
   function setFeedback(type: 'success' | 'error', text: string) {
     feedback = { type, text };
+    if (feedbackTimer) {
+      clearTimeout(feedbackTimer);
+    }
+    feedbackTimer = setTimeout(() => {
+      feedback = null;
+      feedbackTimer = null;
+    }, FEEDBACK_TIMEOUT_MS);
   }
 
   function handleTelemetry(message: TelemetryMessage | null) {
-    if (!message) return;
+    if (!message || componentDestroyed) return;
 
     if (message.type === 'status') {
       applySnapshot(message.payload);
@@ -339,6 +370,40 @@
     });
   }
 
+  function pausePolling() {
+    pollingPaused = true;
+    if (metricsTimer) {
+      clearInterval(metricsTimer);
+      metricsTimer = null;
+    }
+    if (soakTimer) {
+      clearInterval(soakTimer);
+      soakTimer = null;
+    }
+  }
+
+  function resumePolling(runImmediately = false) {
+    if (componentDestroyed) {
+      return;
+    }
+    if (!pollingPaused && metricsTimer && soakTimer) {
+      return;
+    }
+    pollingPaused = false;
+    if (metricsTimer) {
+      clearInterval(metricsTimer);
+    }
+    if (soakTimer) {
+      clearInterval(soakTimer);
+    }
+    metricsTimer = setInterval(() => void refreshMetrics(false), METRIC_POLL_INTERVAL_MS);
+    soakTimer = setInterval(() => void refreshSoak(false), SOAK_POLL_INTERVAL_MS);
+    if (runImmediately) {
+      void refreshMetrics(false);
+      void refreshSoak(false);
+    }
+  }
+
   function getLatencySnapshot(key: keyof LatencySeries): number | null {
     const series = latencySeries[key];
     if (!series.length) return null;
@@ -346,7 +411,7 @@
   }
 
   function formatRelativeTimestamp(ts: number | null | undefined): string {
-    if (!ts || Number.isNaN(ts)) return 'n/d';
+  if (!ts || Number.isNaN(ts)) return 'n/a';
     const millis = ts > 1_000_000_000_000 ? ts : ts * 1000;
     return new Date(millis).toLocaleString();
   }
@@ -363,31 +428,38 @@
     metricsError = '';
     try {
       const latest = await fetchLatestMetrics();
+      if (componentDestroyed) return;
       metrics = latest;
       updateLatencySeries(latest);
     } catch (error) {
+      if (componentDestroyed) return;
       metricsError = getErrorMessage(error, 'Failed to load metrics.');
     } finally {
+      if (componentDestroyed) return;
       if (initial) {
         metricsLoading = false;
       }
     }
   }
 
-  async function refreshSoak(initial = false) {
+async function refreshSoak(initial = false) {
+  if (initial) {
+    soakLoading = true;
+  }
+  soakError = '';
+  try {
+    const results = await fetchSoakResults(10);
+    if (componentDestroyed) return;
+    soakResults = results;
+  } catch (error) {
+    if (componentDestroyed) return;
+    soakError = getErrorMessage(error, 'Failed to load soak test results.');
+  } finally {
+    if (componentDestroyed) return;
     if (initial) {
-      soakLoading = true;
+      soakLoading = false;
     }
-    soakError = '';
-    try {
-      soakResults = await fetchSoakResults(10);
-    } catch (error) {
-      soakError = getErrorMessage(error, 'Failed to load soak test results.');
-    } finally {
-      if (initial) {
-        soakLoading = false;
-      }
-    }
+  }
   }
 
   async function handleModuleToggle(module: string, enabled: boolean) {
@@ -564,7 +636,10 @@
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `telemetry-${new Date().toISOString()}.csv`;
+      const suggested = (blob as Blob & { suggestedName?: string }).suggestedName;
+      const fallback = `telemetry-${new Date().toISOString()}.csv`;
+      const filename = (suggested && suggested.trim()) || fallback;
+      link.download = filename.toLowerCase().endsWith('.csv') ? filename : `${filename}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -579,7 +654,7 @@
 
   function formatTimestamp(ts: number | null | undefined): string {
     if (typeof ts !== 'number' || !Number.isFinite(ts)) {
-      return 'n/d';
+    return 'n/a';
     }
     const millis = ts > 1_000_000_000_000 ? ts : ts * 1000;
     return new Date(millis).toLocaleString();
@@ -664,7 +739,7 @@
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
           <h2 class="text-xs uppercase text-slate-400">Active expression</h2>
           <p class="text-2xl font-semibold capitalize">
-            {orchestrator.last_expression ? orchestrator.last_expression.expression : 'n/d'}
+            {orchestrator.last_expression ? orchestrator.last_expression.expression : 'n/a'}
           </p>
           <p class="mt-2 text-xs text-slate-500">
             Intensity {orchestrator.last_expression ? Math.round(orchestrator.last_expression.intensity * 100) : 0}%
@@ -747,17 +822,17 @@
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">ASR</p>
               <p>Events: {metrics.metrics.asr_worker?.count ?? 0}</p>
-              <p>Average latency: {getLatencySnapshot('asr_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Average latency: {getLatencySnapshot('asr_worker')?.toFixed(1) ?? 'n/a'} ms</p>
             </div>
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">Policy</p>
               <p>Events: {metrics.metrics.policy_worker?.count ?? 0}</p>
-              <p>Average latency: {getLatencySnapshot('policy_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Average latency: {getLatencySnapshot('policy_worker')?.toFixed(1) ?? 'n/a'} ms</p>
             </div>
             <div class="rounded-lg border border-white/5 bg-slate-950/40 p-3 text-xs text-slate-300">
               <p class="font-semibold text-slate-200">TTS</p>
               <p>Events: {metrics.metrics.tts_worker?.count ?? 0}</p>
-              <p>Average latency: {getLatencySnapshot('tts_worker')?.toFixed(1) ?? 'n/d'} ms</p>
+              <p>Average latency: {getLatencySnapshot('tts_worker')?.toFixed(1) ?? 'n/a'} ms</p>
             </div>
           </div>
         {/if}
@@ -862,7 +937,7 @@
             </p>
             {#if orchestrator.memory.current_summary}
               <div class="mt-4 rounded border border-white/5 bg-slate-950/40 p-3 text-sm text-slate-200">
-                <p class="font-semibold">Summary #{orchestrator.memory.current_summary.id ?? 'n/d'}</p>
+                <p class="font-semibold">Summary #{orchestrator.memory.current_summary.id ?? 'n/a'}</p>
                 <p class="mt-2 text-slate-300">{orchestrator.memory.current_summary.summary_text}</p>
                 <p class="mt-2 text-xs text-slate-400">
                   Mood: {orchestrator.memory.current_summary.mood_state} &middot; Updated {formatTimestamp(orchestrator.memory.current_summary.ts)}
@@ -995,6 +1070,9 @@
                   bind:value={personaForm.chaos}
                   class="range"
                   aria-valuenow={personaForm.chaos}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuetext={`${personaForm.chaos}%`}
                   aria-label="Chaos level"
                 />
               </label>
@@ -1007,6 +1085,9 @@
                   bind:value={personaForm.energy}
                   class="range"
                   aria-valuenow={personaForm.energy}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuetext={`${personaForm.energy}%`}
                   aria-label="Energy level"
                 />
               </label>
@@ -1033,7 +1114,7 @@
             <h2 class="text-lg font-medium">OBS</h2>
             <form class="mt-4 space-y-3" on:submit|preventDefault={submitScene}>
               <label class="flex flex-col gap-2 text-sm font-medium text-slate-200">
-                Cena ativa
+                Active scene
                 <input
                   type="text"
                   class="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
@@ -1046,7 +1127,7 @@
                 type="submit"
                 disabled={sceneSubmitting}
               >
-                {sceneSubmitting ? 'Refreshing...' : 'Atualizar cena'}
+                {sceneSubmitting ? 'Refreshing...' : 'Update scene'}
               </button>
             </form>
           </article>
@@ -1079,9 +1160,9 @@
       </section>
     {/if}
     <footer class="mt-10 border-t border-white/10 pt-4 text-[11px] text-slate-500" aria-label="Attributions and licenses">
-      <p class="font-medium">© {currentYear} Kitsu.exe · Internal use.</p>
+      <p class="font-medium">Copyright {currentYear} Kitsu.exe - Internal use only.</p>
       <p class="mt-1">
-        Required licenses: Llama 3 8B Instruct (Meta), Coqui-TTS, and Live2D Avatar “Lumi.” See `licenses/third_party/` in the repository.
+        Required licenses: Llama 3 8B Instruct (Meta), Coqui-TTS, and the Live2D avatar "Lumi". See `licenses/third_party/` in the repository.
       </p>
     </footer>
   </div>

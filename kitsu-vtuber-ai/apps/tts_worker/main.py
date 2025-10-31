@@ -7,9 +7,11 @@ import os
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
 
 from libs.common import configure_json_logging
+from libs.config import get_app_config
+from libs.contracts import TTSRequestPayload, TTSResponsePayload
+from libs.telemetry import TelemetryClient
 
 from .service import TTSResult, TTSService, get_tts_service
 
@@ -21,20 +23,18 @@ app = FastAPI(title="Kitsu TTS Worker", version="0.2.0")
 
 _service: Optional[TTSService] = None
 _worker_task: Optional[asyncio.Task[None]] = None
-
-
-class SpeakRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    voice: Optional[str] = Field(None, description="Preferred voice identifier")
-    request_id: Optional[str] = Field(None, description="Optional correlation id")
-
-
-class SpeakResponse(BaseModel):
-    audio_path: str
-    voice: str
-    latency_ms: float
-    visemes: list[Dict[str, float]]
-    cached: bool
+settings = get_app_config()
+tts_cfg = settings.tts
+orchestrator_cfg = settings.orchestrator
+_telemetry_client = (
+    TelemetryClient(
+        orchestrator_cfg.telemetry_url,
+        api_key=orchestrator_cfg.telemetry_api_key,
+        service="tts_worker",
+    )
+    if orchestrator_cfg.telemetry_url
+    else None
+)
 
 
 @app.on_event("startup")
@@ -42,7 +42,7 @@ async def startup() -> None:
     global _service, _worker_task
     if _service is not None:
         return
-    service = get_tts_service()
+    service = get_tts_service(config=tts_cfg, telemetry=_telemetry_client)
     _service = service
     _worker_task = asyncio.create_task(service.worker())
     logger.info("TTS worker ready")
@@ -67,8 +67,8 @@ async def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/speak", response_model=SpeakResponse)
-async def speak(request: SpeakRequest) -> SpeakResponse:
+@app.post("/speak", response_model=TTSResponsePayload)
+async def speak(request: TTSRequestPayload) -> TTSResponsePayload:
     if _service is None:
         raise HTTPException(status_code=503, detail="TTS service unavailable")
     result: TTSResult = await _service.enqueue(
@@ -76,7 +76,7 @@ async def speak(request: SpeakRequest) -> SpeakResponse:
         voice=request.voice,
         request_id=request.request_id,
     )
-    return SpeakResponse(
+    return TTSResponsePayload(
         audio_path=str(result.audio_path),
         voice=result.voice,
         latency_ms=result.latency_ms,
@@ -88,11 +88,9 @@ async def speak(request: SpeakRequest) -> SpeakResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.getenv("TTS_HOST", "0.0.0.0")
-    port = int(os.getenv("TTS_PORT", "8070"))
     uvicorn.run(
         "apps.tts_worker.main:app",
-        host=host,
-        port=port,
+        host=tts_cfg.bind_host,
+        port=tts_cfg.bind_port,
         reload=os.getenv("UVICORN_RELOAD") == "1",
     )

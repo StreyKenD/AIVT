@@ -50,6 +50,7 @@ async def run(config: ASRConfig | None = None) -> None:
                 vad=vad,
                 orchestrator=orchestrator,
                 telemetry=telemetry,
+                allow_non_english=config.allow_non_english,
             )
 
             if attempt == 1:
