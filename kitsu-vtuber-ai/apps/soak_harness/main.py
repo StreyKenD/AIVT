@@ -107,7 +107,7 @@ class SoakHarness:
             self._telemetry_client = TelemetryClient(
                 self._telemetry_url,
                 api_key=telemetry_api_key,
-                service="soak_harness",
+                source="soak_harness",
             )
 
     async def run(

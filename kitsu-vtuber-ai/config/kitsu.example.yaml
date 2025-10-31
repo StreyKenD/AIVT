@@ -4,9 +4,7 @@ orchestrator:
   bind_host: 0.0.0.0
   bind_port: 8000
   public_url: http://127.0.0.1:8000
-  policy_url: null
   policy_timeout_seconds: 40.0
-  tts_url: null
   tts_timeout_seconds: 60.0
   telemetry_url: http://127.0.0.1:8001
   telemetry_api_key: ""

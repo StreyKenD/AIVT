@@ -53,7 +53,7 @@ TELEMETRY = (
     TelemetryClient(
         orchestrator_cfg.telemetry_url,
         api_key=orchestrator_cfg.telemetry_api_key,
-        service="policy_worker",
+        source="policy_worker",
     )
     if orchestrator_cfg.telemetry_url
     else None

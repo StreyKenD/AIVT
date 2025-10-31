@@ -36,22 +36,16 @@ class EventBroker:
         for queue in subscribers:
             await queue.put(message)
 
-        if self._telemetry is None:
+        telemetry = self._telemetry
+        if telemetry is None:
             return
-
-        event_type = str(message.get("type") or "unknown")
-        payload = message.get("payload")
-        if not isinstance(payload, dict):
-            payload = {
-                key: value
-                for key, value in message.items()
-                if key != "type"
-            }
         try:
-            await self._telemetry.publish(event_type, payload)
+            await telemetry.publish_event(message)
         except Exception:
             logger.debug(
-                "Telemetry publish failed for %s", event_type, exc_info=True
+                "Telemetry publish failed for %s",
+                message.get("type", "unknown"),
+                exc_info=True,
             )
 
 

@@ -452,7 +452,7 @@ class TTSService:
         self._queue: asyncio.Queue[TTSJob] = asyncio.Queue()
         self._current_job: Optional[TTSJob] = None
         self._cancel_event = asyncio.Event()
-        self._telemetry = telemetry or TelemetryClient.from_env(service="tts_worker")
+        self._telemetry = telemetry or TelemetryClient.from_env(source="tts_worker")
         real_backends = [
             s for s in self._synthesizers if not isinstance(s, SilentSynthesizer)
         ]

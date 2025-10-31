@@ -264,6 +264,8 @@ def test_chat_pipeline_hits_policy_and_tts(
 
     monkeypatch.setattr(module, "_invoke_policy", fake_invoke_policy)
     monkeypatch.setattr(module, "_invoke_tts", fake_invoke_tts)
+    module.state._policy_invoker = fake_invoke_policy  # type: ignore[attr-defined]
+    module.state._tts_invoker = fake_invoke_tts  # type: ignore[attr-defined]
 
     with TestClient(module.app) as client:
         response = client.post("/chat/respond", json={"text": "ping", "play_tts": True})
@@ -274,6 +276,79 @@ def test_chat_pipeline_hits_policy_and_tts(
     status = module.state.snapshot()
     assert status["last_tts"]["voice"] == "kitsune"
     assert module.state.memory.buffer.as_list()[-1].role == "assistant"
+
+
+def test_chat_respond_returns_202_when_policy_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = load_orchestrator(monkeypatch, tmp_path)
+
+    async def missing_policy(payload: dict[str, Any], broker: Any) -> None:
+        return None
+
+    async def unexpected_tts(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("TTS should not be invoked when policy gives no result")
+
+    monkeypatch.setattr(module, "_invoke_policy", missing_policy)
+    monkeypatch.setattr(module, "_invoke_tts", unexpected_tts)
+    module.state._policy_invoker = missing_policy  # type: ignore[attr-defined]
+    module.state._tts_invoker = unexpected_tts  # type: ignore[attr-defined]
+
+    with TestClient(module.app) as client:
+        response = client.post("/chat/respond", json={"text": "ping", "play_tts": True})
+
+    assert response.status_code == 202
+    assert response.json()["detail"] == "No response generated yet"
+    buffer = module.state.memory.buffer.as_list()
+    assert buffer[-1].role == "user"
+    assert buffer[-1].text == "ping"
+
+
+def test_chat_respond_handles_missing_tts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = load_orchestrator(monkeypatch, tmp_path)
+
+    async def fake_policy(payload: dict[str, Any], broker: Any) -> dict[str, Any]:
+        return {
+            "content": "<speech>Hello!</speech>",
+            "request_id": "req-456",
+            "meta": {},
+        }
+
+    async def missing_tts(text: str, voice: Optional[str], request_id: Optional[str]) -> None:
+        return None
+
+    monkeypatch.setattr(module, "_invoke_policy", fake_policy)
+    monkeypatch.setattr(module, "_invoke_tts", missing_tts)
+    module.state._policy_invoker = fake_policy  # type: ignore[attr-defined]
+    module.state._tts_invoker = missing_tts  # type: ignore[attr-defined]
+
+    with TestClient(module.app) as client:
+        response = client.post("/chat/respond", json={"text": "ping", "play_tts": True})
+
+    assert response.status_code == 200
+    payload = response.json()["payload"]
+    assert payload["content"].startswith("<speech>")
+    status = module.state.snapshot()
+    assert status["last_tts"]["voice"] is None
+    assert module.state.memory.buffer.as_list()[-1].role == "assistant"
+
+
+def test_control_mute_works_when_tts_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = load_orchestrator(monkeypatch, tmp_path)
+    module.state.modules["tts_worker"].set_enabled(False)
+
+    with TestClient(module.app) as client:
+        response = client.post("/control/mute", json={"muted": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["type"] == "control.mute"
+    assert module.state.tts_muted is True
+    assert module.state.modules["tts_worker"].enabled is False
 
 
 def test_publish_sends_telemetry(

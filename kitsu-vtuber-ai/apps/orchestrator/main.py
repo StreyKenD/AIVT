@@ -26,12 +26,14 @@ logger = logging.getLogger(__name__)
 
 settings = get_app_config()
 orchestrator_cfg = settings.orchestrator
+policy_cfg = settings.policy
+tts_cfg = settings.tts
 memory_cfg = settings.memory
 persona_cfg = settings.persona
 
-POLICY_URL = orchestrator_cfg.policy_url
+POLICY_URL = policy_cfg.url
 POLICY_TIMEOUT_SECONDS = orchestrator_cfg.policy_timeout_seconds
-TTS_API_URL = orchestrator_cfg.tts_url
+TTS_API_URL = tts_cfg.url
 TTS_TIMEOUT_SECONDS = orchestrator_cfg.tts_timeout_seconds
 
 _policy_client: Optional[httpx.AsyncClient] = None
@@ -125,7 +127,7 @@ _events_telemetry = (
     TelemetryClient(
         orchestrator_cfg.telemetry_url,
         api_key=orchestrator_cfg.telemetry_api_key,
-        service="orchestrator",
+        source="orchestrator",
     )
     if orchestrator_cfg.telemetry_url
     else None
@@ -157,7 +159,7 @@ gpu_telemetry = (
     TelemetryClient(
         orchestrator_cfg.telemetry_url,
         api_key=orchestrator_cfg.telemetry_api_key,
-        service="orchestrator.gpu",
+        source="orchestrator.gpu",
     )
     if orchestrator_cfg.telemetry_url
     else None

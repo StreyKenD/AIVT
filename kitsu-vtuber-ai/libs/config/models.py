@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -18,9 +19,7 @@ class OrchestratorSettings(BaseModel):
     bind_host: str = "0.0.0.0"
     bind_port: int = 8000
     public_url: Optional[str] = None
-    policy_url: Optional[str] = None
     policy_timeout_seconds: float = Field(40.0, ge=0.0)
-    tts_url: Optional[str] = None
     tts_timeout_seconds: float = Field(60.0, ge=0.0)
     telemetry_url: Optional[str] = None
     telemetry_api_key: Optional[str] = None
@@ -353,17 +352,50 @@ class AppSettings(BaseModel):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     persona: PersonaSettings = Field(default_factory=PersonaSettings)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_orchestrator_urls(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        orchestrator = data.get("orchestrator")
+        if not isinstance(orchestrator, dict):
+            return data
+
+        policy_url = orchestrator.pop("policy_url", None)
+        if isinstance(policy_url, str) and policy_url.strip():
+            policy = data.get("policy")
+            if policy is None:
+                policy = {}
+                data["policy"] = policy
+            if isinstance(policy, dict) and "endpoint_url" not in policy:
+                policy["endpoint_url"] = policy_url
+            warnings.warn(
+                "orchestrator.policy_url is deprecated; use policy.endpoint_url instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        tts_url = orchestrator.pop("tts_url", None)
+        if isinstance(tts_url, str) and tts_url.strip():
+            tts = data.get("tts")
+            if tts is None:
+                tts = {}
+                data["tts"] = tts
+            if isinstance(tts, dict) and "endpoint_url" not in tts:
+                tts["endpoint_url"] = tts_url
+            warnings.warn(
+                "orchestrator.tts_url is deprecated; use tts.endpoint_url instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        return data
+
     def resolved(self) -> "AppSettings":
         orchestrator = self.orchestrator
-        policy = self.policy
-        tts = self.tts
         asr = self.asr
         persona = self.persona
 
-        if orchestrator.policy_url is None:
-            orchestrator = orchestrator.model_copy(update={"policy_url": policy.url})
-        if orchestrator.tts_url is None:
-            orchestrator = orchestrator.model_copy(update={"tts_url": tts.url})
         if orchestrator.public_url is None:
             orchestrator = orchestrator.model_copy(
                 update={"public_url": f"http://127.0.0.1:{orchestrator.bind_port}"}

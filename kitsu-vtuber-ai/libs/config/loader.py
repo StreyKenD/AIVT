@@ -268,7 +268,6 @@ _register(
 _register(
     "TTS_API_URL",
     _map(("tts", "endpoint_url")),
-    _map(("orchestrator", "tts_url")),
 )
 _register(
     "TTS_CACHE_DIR",

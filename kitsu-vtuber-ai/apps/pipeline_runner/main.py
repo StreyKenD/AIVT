@@ -208,8 +208,20 @@ async def _run_service(
 
 
 def _disabled_services() -> set[str]:
-    disabled = os.getenv("PIPELINE_DISABLE", "")
-    return {name.strip().lower() for name in disabled.split(",") if name.strip()}
+    base = os.getenv("PIPELINE_DISABLE", "")
+    disabled = {name.strip().lower() for name in base.split(",") if name.strip()}
+
+    prefix = "PIPELINE_DISABLE_"
+    for key, raw_value in os.environ.items():
+        if not key.startswith(prefix):
+            continue
+        service = key[len(prefix) :].strip().lower()
+        if not service:
+            continue
+        value = (raw_value or "").strip().lower()
+        if not value or value not in {"0", "false", "no", "off"}:
+            disabled.add(service)
+    return disabled
 
 
 def _require_env(vars_needed: List[str]) -> tuple[bool, Optional[str]]:
