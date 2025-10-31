@@ -22,3 +22,4 @@ kitsu-telemetry/ui/.vite/
 # Editor files
 .idea/
 .vscode/
+!.vscode/settings.json

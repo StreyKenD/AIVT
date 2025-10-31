@@ -164,6 +164,11 @@ These variables control how the orchestrator exposes HTTP/WebSocket endpoints an
 
 > Install the hooks locally with `poetry run pre-commit install` (the [`./.pre-commit-config.yaml`](.pre-commit-config.yaml) file already targets `apps/`, `libs/`, and `tests/`).
 
+### VS Code setup
+- Install **Black Formatter** (`ms-python.black-formatter`) for on-save formatting.
+- Install **Ruff** (`charliermarsh.ruff`) for lint diagnostics inside the editor.
+- With the repo's `.vscode/settings.json` checked in, these extensions align VS Code with the configured format and lint tooling.
+
 ## QA & soak harness
 - Set `SOAK_POLICY_URL`/`SOAK_TELEMETRY_URL` in `.env` to match the environment.
 - Start all services (`powershell -ExecutionPolicy Bypass -File scripts/run_pipeline.ps1 start`).
