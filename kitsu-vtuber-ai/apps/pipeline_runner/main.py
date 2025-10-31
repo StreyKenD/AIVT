@@ -9,14 +9,19 @@ import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-import shutil
-import socket
 from urllib.parse import urlparse
 from typing import Callable, Dict, Iterable, List, Optional
 
 import httpx
 
 from libs.config import get_app_config
+
+from .utils import (
+    combine_predicates,
+    ollama_binary_predicate,
+    ollama_reachability_predicate,
+    port_predicate,
+)
 
 
 logger = logging.getLogger("kitsu.pipeline")
@@ -207,61 +212,11 @@ def _disabled_services() -> set[str]:
     return {name.strip().lower() for name in disabled.split(",") if name.strip()}
 
 
-def _is_port_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return False
-    return True
-
-
 def _require_env(vars_needed: List[str]) -> tuple[bool, Optional[str]]:
     missing = [name for name in vars_needed if not os.getenv(name)]
     if missing:
         return False, f"missing env vars: {', '.join(missing)}"
     return True, None
-
-
-def _port_predicate(host: str, port: int) -> callable:
-    def _predicate() -> tuple[bool, Optional[str]]:
-        available = _is_port_available(host, port)
-        if not available:
-            return False, f"port {host}:{port} already in use"
-        return True, None
-
-    return _predicate
-
-
-def _ollama_reachability_predicate(ollama_url: str) -> Callable[[], tuple[bool, Optional[str]]]:
-    skip = os.getenv("PIPELINE_SKIP_OLLAMA_CHECK", "0").lower() in {"1", "true", "yes"}
-    if skip:
-        return lambda: (True, None)
-    parsed = urlparse(ollama_url)
-    scheme = parsed.scheme or "http"
-    host = parsed.hostname
-    if not host:
-        return lambda: (False, f"invalid OLLAMA_URL: {ollama_url}")
-    port = parsed.port or (443 if scheme == "https" else 80)
-
-    def _predicate() -> tuple[bool, Optional[str]]:
-        try:
-            with socket.create_connection((host, port), timeout=1.5):
-                return True, None
-        except OSError as exc:
-            return False, f"ollama unreachable at {host}:{port} ({exc})"
-
-    return _predicate
-
-
-def _ollama_binary_predicate() -> Callable[[], tuple[bool, Optional[str]]]:
-    def _predicate() -> tuple[bool, Optional[str]]:
-        if shutil.which("ollama"):
-            return True, None
-        return False, "ollama executable not found in PATH"
-
-    return _predicate
 
 
 def _ollama_autostart_enabled() -> bool:
@@ -292,21 +247,6 @@ def _health_host(host: str) -> str:
     return host
 
 
-def _combine_predicates(
-    predicates: Iterable[Callable[[], tuple[bool, Optional[str]]]]
-) -> Callable[[], tuple[bool, Optional[str]]]:
-    checks = list(predicates)
-
-    def _predicate() -> tuple[bool, Optional[str]]:
-        for check in checks:
-            ok, reason = check()
-            if not ok:
-                return ok, reason
-        return True, None
-
-    return _predicate
-
-
 def _service_specs(python: str) -> Iterable[ServiceSpec]:
     settings = get_app_config()
     orch_cfg = settings.orchestrator
@@ -335,10 +275,10 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
                 ServiceSpec(
                     name="ollama",
                     command=["ollama", "serve"],
-                    predicate=_combine_predicates(
+                    predicate=combine_predicates(
                         (
-                            _ollama_binary_predicate(),
-                            _port_predicate(ollama_host, ollama_port),
+                            ollama_binary_predicate(),
+                            port_predicate(ollama_host, ollama_port),
                         )
                     ),
                     restart=True,
@@ -353,10 +293,10 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
             logger.info("Skipping Ollama autostart for non-local host %s", ollama_host)
 
     policy_predicates: List[Callable[[], tuple[bool, Optional[str]]]] = [
-        _port_predicate(policy_host, policy_port)
+        port_predicate(policy_host, policy_port)
     ]
     if not (ollama_autostart and _is_local_host(ollama_host)):
-        policy_predicates.append(_ollama_reachability_predicate(ollama_url))
+        policy_predicates.append(ollama_reachability_predicate(ollama_url))
 
     specs.extend(
         [
@@ -372,7 +312,7 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
                     "--port",
                     orch_port,
                 ],
-                predicate=_port_predicate(orch_host, orch_port_int),
+                predicate=port_predicate(orch_host, orch_port_int),
                 health_check=HealthCheckSpec(
                     url=f"http://{_health_host(orch_host)}:{orch_port_int}/health",
                     interval=20.0,
@@ -392,12 +332,12 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
                     "--port",
                     control_port,
                 ],
-                predicate=_port_predicate(control_host, control_port_int),
+                predicate=port_predicate(control_host, control_port_int),
             ),
             ServiceSpec(
                 name="policy_worker",
                 command=[python, "-m", "apps.policy_worker.main"],
-                predicate=_combine_predicates(policy_predicates),
+                predicate=combine_predicates(policy_predicates),
                 health_check=HealthCheckSpec(
                     url=f"http://{_health_host(policy_host)}:{policy_port}/health",
                     interval=20.0,
@@ -412,7 +352,7 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
             ServiceSpec(
                 name="tts_worker",
                 command=[python, "-m", "apps.tts_worker.main"],
-                predicate=_port_predicate(tts_host, tts_port),
+                predicate=port_predicate(tts_host, tts_port),
                 health_check=HealthCheckSpec(
                     url=f"http://{_health_host(tts_host)}:{tts_port}/health",
                     interval=20.0,

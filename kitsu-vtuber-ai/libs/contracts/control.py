@@ -52,7 +52,7 @@ class ChatIngestCommand(BaseModel):
         return value
 
 
-class PanicCommand(BaseModel):
+class PanicRequest(BaseModel):
     reason: Optional[str] = Field(
         None,
         description="Optional reason for triggering panic.",
@@ -60,8 +60,20 @@ class PanicCommand(BaseModel):
     )
 
 
-class MuteCommand(BaseModel):
+class MuteRequest(BaseModel):
     muted: bool = Field(..., description="Indicates whether the TTS worker is muted.")
+
+
+class ResumeRequest(BaseModel):
+    clear_mute: bool = Field(
+        True,
+        description="When true the resume action also unmutes the TTS worker.",
+    )
+    note: Optional[str] = Field(
+        None,
+        max_length=240,
+        description="Optional operator note describing the resume action.",
+    )
 
 
 class PresetCommand(BaseModel):
@@ -71,10 +83,15 @@ class PresetCommand(BaseModel):
 __all__ = [
     "ChatIngestCommand",
     "ModuleToggleCommand",
-    "MuteCommand",
+    "MuteRequest",
     "OBSSceneCommand",
-    "PanicCommand",
+    "PanicRequest",
     "PersonaUpdateCommand",
+    "ResumeRequest",
     "PresetCommand",
     "VTSExpressionCommand",
 ]
+
+# Backwards compatibility aliases (scheduled for removal).
+PanicCommand = PanicRequest
+MuteCommand = MuteRequest
