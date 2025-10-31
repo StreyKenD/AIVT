@@ -8,6 +8,7 @@ from typing import AsyncIterator, Dict
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from libs.config import reload_app_config
 from apps.asr_worker import ASRConfig, SpeechPipeline, TranscriptionResult
 from apps.asr_worker.metrics import ASRTelemetry
 
@@ -84,7 +85,8 @@ class _HTTPPublisher:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
-async def test_pipeline_posts_events_to_orchestrator(monkeypatch: pytest.MonkeyPatch):
+async def test_pipeline_posts_events_to_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    reload_app_config()
     module = importlib.reload(importlib.import_module("apps.orchestrator.main"))
     app = module.app
     broker = module.broker

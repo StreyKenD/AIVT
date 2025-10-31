@@ -1,4 +1,4 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 ## Purpose
 This repository powers the Kitsu.exe VTuber AI runtime. Follow the conventions below when proposing changes so agents stay aligned.
@@ -6,18 +6,21 @@ This repository powers the Kitsu.exe VTuber AI runtime. Follow the conventions b
 ## How to run (MVP)
 1. Python 3.11 + Poetry installed.
 2. Install deps: `poetry install`.
-3. Configure `.env` from `.env.example` (set `ASR_INPUT_DEVICE` via `poetry run python -m apps.asr_worker.devices`).
+3. Copy `config/kitsu.example.yaml` to `config/kitsu.yaml`, update the service blocks (`orchestrator`, `policy`, `tts`, `asr`, `memory`), then configure `.env` from `.env.example` for secrets/overrides (set `ASR_INPUT_DEVICE` via `poetry run python -m apps.asr_worker.devices`).
 4. Launch everything with one command:
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts/run_pipeline.ps1 start`
    - Cross-platform: `poetry run python -m apps.pipeline_runner.main`
    - Services can be skipped with `PIPELINE_DISABLE` (e.g. `twitch_ingest,avatar_controller`).
+   - The supervisor polls orchestrator, policy, and TTS `/health` endpoints; keep those handlers lightweight because a failure triggers a restart with exponential backoff logging.
 5. Install `espeak-ng` if you expect real TTS audio; without it the worker stays in synthetic mode.
+   - Optional: `pip install sherpa-onnx` and update `config/kitsu.yaml` (`asr.backend` + `asr.sherpa.*`) if you want to use Sherpa-ONNX for low-latency ASR.
 
 ## Runtime dependencies
 - OBS Studio with the **OBS WebSocket v5** plugin (`obsws-python` compatible).
 - VTube Studio (optional) for avatar expressions.
 - `ffmpeg`, `portaudio`, `libsndfile`, and `espeak-ng` on the host.
 - Ollama running Llama 3 8B (or the configured fallback model) for policy responses.
+- Optional: `sherpa-onnx` if you enable the low-latency Sherpa ASR backend.
 
 ## Quality
 - Lint/format: `poetry run ruff . && poetry run black --check .`
@@ -31,6 +34,11 @@ This repository powers the Kitsu.exe VTuber AI runtime. Follow the conventions b
 - Keep audio code injectable so fake audio remains an option for CI.
 - TTS: continue targeting Coqui/Piper with permissive voices and document licences in `licenses/third_party/`.
 - LLM: default to Ollama + Llama 3 8B (note attribution in the README).
+
+## Service boundaries
+- When two services need to talk, import the Pydantic models from `libs.contracts` instead of declaring ad-hoc schemas. This keeps ASR, policy, orchestrator, and control panel fully aligned.
+- Use helpers in `libs.clients` (for example `OrchestratorClient`) for cross-service HTTP calls to avoid duplicating `httpx` plumbing.
+- Keep the `apps/*` packages self-contained; no worker should import code from another worker. Share behaviour via `libs/` only.
 
 ## Safety & moderation
 - Family-friendly defaults stay enabled.

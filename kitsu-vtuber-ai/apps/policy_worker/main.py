@@ -2,35 +2,62 @@ from __future__ import annotations
 
 import asyncio
 import html
+import importlib
 import json
 import logging
 import os
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 from libs.common import configure_json_logging
+from libs.config import get_app_config
+from libs.contracts import PolicyRequestPayload
 from libs.safety import ModerationPipeline
 from libs.telemetry import TelemetryClient
 
 configure_json_logging("policy_worker")
 logger = logging.getLogger("kitsu.policy")
 
-DEFAULT_MODEL = os.getenv("LLM_MODEL_NAME", "mixtral:8x7b-instruct-q4_K_M")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-POLICY_FAMILY_FRIENDLY = os.getenv("POLICY_FAMILY_FRIENDLY", "1") != "0"
-POLICY_STREAM_TIMEOUT = float(os.getenv("POLICY_STREAM_TIMEOUT", "30"))
-POLICY_RETRY_ATTEMPTS = int(os.getenv("POLICY_RETRY_ATTEMPTS", "1"))
-POLICY_RETRY_BACKOFF = float(os.getenv("POLICY_RETRY_BACKOFF", "1.0"))
-POLICY_TEMPERATURE = float(os.getenv("POLICY_TEMPERATURE", "0.65"))
+settings = get_app_config()
+policy_cfg = settings.policy
+orchestrator_cfg = settings.orchestrator
+
+def _resolve_model_name() -> str:
+    backend = policy_cfg.backend
+    if backend == "openai":
+        return policy_cfg.openai.model or policy_cfg.model_name
+    if backend == "local":
+        return policy_cfg.local.model_path or policy_cfg.model_name
+    return policy_cfg.model_name
+
+
+MODEL_NAME = _resolve_model_name()
+OLLAMA_URL = policy_cfg.ollama_url
+OPENAI_CONFIG = policy_cfg.openai
+LOCAL_LLM_CONFIG = policy_cfg.local
+POLICY_BACKEND = policy_cfg.backend
+POLICY_FAMILY_FRIENDLY = policy_cfg.family_friendly
+POLICY_STREAM_TIMEOUT = policy_cfg.stream_timeout
+POLICY_RETRY_ATTEMPTS = policy_cfg.retry_attempts
+POLICY_RETRY_BACKOFF = policy_cfg.retry_backoff
+POLICY_TEMPERATURE = policy_cfg.temperature
 
 MODERATION = ModerationPipeline()
-TELEMETRY = TelemetryClient.from_env(service="policy_worker")
+TELEMETRY = (
+    TelemetryClient(
+        orchestrator_cfg.telemetry_url,
+        api_key=orchestrator_cfg.telemetry_api_key,
+        service="policy_worker",
+    )
+    if orchestrator_cfg.telemetry_url
+    else None
+)
 
 
 async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> None:
@@ -93,7 +120,7 @@ FEW_SHOT_EXCHANGES: List[Dict[str, str]] = [
 ]
 
 
-def _family_mode(payload: "PolicyRequest") -> bool:
+def _family_mode(payload: "PolicyRequestPayload") -> bool:
     if payload.family_friendly is not None:
         return payload.family_friendly
     return POLICY_FAMILY_FRIENDLY
@@ -107,29 +134,6 @@ def _wrap_safe_xml(text: str, mood: str = "kawaii") -> str:
     )
 
 
-class PolicyRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    persona_style: str = Field("kawaii", description="Current persona style")
-    chaos_level: float = Field(0.35, ge=0.0, le=1.0)
-    energy: float = Field(0.65, ge=0.0, le=1.0)
-    family_friendly: Optional[bool] = Field(
-        None, description="Override to disable/enable family-friendly filtering"
-    )
-    memory_summary: Optional[str] = Field(
-        None, description="Recent memory summary provided by the orchestrator"
-    )
-    recent_turns: List[Dict[str, str]] = Field(
-        default_factory=list,
-        description="Short history of messages with role/content fields",
-    )
-
-    @validator("recent_turns", each_item=True)
-    def _validate_turn(cls, value: Dict[str, str]) -> Dict[str, str]:  # noqa: D417
-        if "role" not in value or "content" not in value:
-            raise ValueError("each turn must include role and content")
-        return value
-
-
 class PolicyResponse(BaseModel):
     content: str
     latency_ms: float
@@ -138,8 +142,15 @@ class PolicyResponse(BaseModel):
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
-class OllamaStreamError(RuntimeError):
-    """Raised when the Ollama streaming pipeline fails to return a valid reply."""
+class LLMStreamError(RuntimeError):
+    """Raised when the configured LLM backend fails to return a valid reply."""
+
+
+def _load_optional_module(name: str):
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError:
+        return None
 
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
@@ -173,7 +184,7 @@ def _tokenize_for_streaming(message: str) -> List[str]:
 
 
 def _build_persona_snapshot(
-    payload: PolicyRequest, family_mode: bool
+    payload: PolicyRequestPayload, family_mode: bool
 ) -> Dict[str, Any]:
     return {
         "style": payload.persona_style,
@@ -183,13 +194,19 @@ def _build_persona_snapshot(
     }
 
 
-def _build_messages(payload: PolicyRequest, family_mode: bool) -> List[Dict[str, str]]:
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        style=payload.persona_style,
-        energy=payload.energy,
-        chaos=payload.chaos_level,
-        family="ON" if family_mode else "OFF",
-    )
+def _build_messages(
+    payload: PolicyRequestPayload, family_mode: bool
+) -> List[Dict[str, str]]:
+    template = payload.persona_prompt or SYSTEM_PROMPT_TEMPLATE
+    try:
+        system_prompt = template.format(
+            style=payload.persona_style,
+            energy=payload.energy,
+            chaos=payload.chaos_level,
+            family="ON" if family_mode else "OFF",
+        )
+    except KeyError:
+        system_prompt = template
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
     if payload.memory_summary:
         messages.append(
@@ -224,118 +241,419 @@ def _extract_stats(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return stats
 
 
-async def _stream_ollama_response(
-    payload: PolicyRequest,
-    request_id: str,
-    start_time: float,
-    persona: Dict[str, Any],
-    family_mode: bool,
-    attempt: int,
-) -> AsyncIterator[str]:
-    messages = _build_messages(payload, family_mode)
-    timeout = httpx.Timeout(POLICY_STREAM_TIMEOUT)
-    aggregated_tokens: List[str] = []
-    final_metadata: Dict[str, Any] = {}
+class BaseLLMClient:
+    backend: str = "unknown"
 
-    try:
-        async with httpx.AsyncClient(base_url=OLLAMA_URL, timeout=timeout) as client:
-            async with client.stream(
-                "POST",
-                "/api/chat",
-                json={
-                    "model": DEFAULT_MODEL,
-                    "messages": messages,
-                    "stream": True,
-                    "options": {
-                        "temperature": POLICY_TEMPERATURE,
-                        "top_p": 0.9,
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+
+    async def stream_response(
+        self,
+        payload: PolicyRequestPayload,
+        request_id: str,
+        start_time: float,
+        persona: Dict[str, Any],
+        family_mode: bool,
+        attempt: int,
+    ) -> AsyncIterator[str]:
+        raise NotImplementedError
+
+
+class OllamaLLMClient(BaseLLMClient):
+    backend = "ollama"
+
+    def __init__(self, base_url: str, model_name: str) -> None:
+        super().__init__(model_name)
+        self._base_url = base_url.rstrip('/')
+
+    async def stream_response(
+        self,
+        payload: PolicyRequestPayload,
+        request_id: str,
+        start_time: float,
+        persona: Dict[str, Any],
+        family_mode: bool,
+        attempt: int,
+    ) -> AsyncIterator[str]:
+        messages = _build_messages(payload, family_mode)
+        timeout = httpx.Timeout(POLICY_STREAM_TIMEOUT)
+        aggregated_tokens: List[str] = []
+        final_metadata: Dict[str, Any] = {}
+
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    "/api/chat",
+                    json={
+                        "model": self.model_name,
+                        "messages": messages,
+                        "stream": True,
+                        "options": {
+                            "temperature": POLICY_TEMPERATURE,
+                            "top_p": 0.9,
+                        },
                     },
-                },
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.debug("Discarding non-JSON chunk from Ollama: %s", line)
-                        continue
-                    if "error" in chunk:
-                        raise OllamaStreamError(chunk["error"])
-                    message = chunk.get("message") or {}
-                    token = message.get("content") or chunk.get("response")
-                    if token:
-                        aggregated_tokens.append(token)
-                        yield _format_sse(
-                            "token",
-                            {
-                                "token": token,
-                                "index": len(aggregated_tokens) - 1,
-                                "request_id": request_id,
-                                "source": "ollama",
-                            },
-                        )
-                    if chunk.get("done"):
-                        final_metadata = chunk
-                        break
-    except httpx.HTTPStatusError as exc:
-        body_preview = await _response_preview(exc.response)
-        if "model not found" in body_preview.lower():
-            body_preview = (
-                f"{body_preview}. Install the model with `ollama pull {DEFAULT_MODEL}` "
-                "or update LLM_MODEL_NAME."
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.debug("Discarding non-JSON chunk from Ollama: %s", line)
+                            continue
+                        if "error" in chunk:
+                            raise LLMStreamError(chunk["error"])
+                        message = chunk.get("message") or {}
+                        token = message.get("content") or chunk.get("response")
+                        if token:
+                            aggregated_tokens.append(token)
+                            yield _format_sse(
+                                "token",
+                                {
+                                    "token": token,
+                                    "index": len(aggregated_tokens) - 1,
+                                    "request_id": request_id,
+                                    "source": self.backend,
+                                },
+                            )
+                        if chunk.get("done"):
+                            final_metadata = chunk
+                            break
+        except httpx.HTTPStatusError as exc:
+            body_preview = await _response_preview(exc.response)
+            if "model not found" in body_preview.lower():
+                body_preview = (
+                    f"{body_preview}. Install the model with ollama pull {self.model_name} " +
+                    "or update LLM_MODEL_NAME."
+                )
+            raise LLMStreamError(
+                f"Ollama HTTP {exc.response.status_code}: {body_preview}"
+            ) from exc
+        except (httpx.RequestError, asyncio.TimeoutError) as exc:
+            raise LLMStreamError(f"Ollama request failed: {exc}") from exc
+
+        if not aggregated_tokens:
+            raise LLMStreamError("No tokens returned from Ollama")
+
+        content = ''.join(aggregated_tokens).strip()
+        if not all(tag in content for tag in ("<speech>", "<mood>", "<actions>")):
+            raise LLMStreamError("Invalid XML payload from Ollama")
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        stats = _extract_stats(final_metadata)
+        policy_response = PolicyResponse(
+            content=content,
+            latency_ms=round(latency_ms, 2),
+            source=self.backend,
+            request_id=request_id,
+            meta={
+                "persona": persona,
+                "model": self.model_name,
+                "stats": stats,
+                "retries": attempt,
+            },
+        )
+        await _publish_policy_metric(
+            "policy.response",
+            {
+                "request_id": request_id,
+                "status": "ok",
+                "source": self.backend,
+                "latency_ms": round(latency_ms, 2),
+                "persona": persona,
+                "retries": attempt,
+                "text_length": len(payload.text),
+                "model": self.model_name,
+                "stats": stats,
+            },
+        )
+        yield _format_sse("final", policy_response.dict())
+
+
+class OpenAILLMClient(BaseLLMClient):
+    backend = "openai"
+
+    def __init__(self, config: OpenAISettings, model_name: str) -> None:
+        super().__init__(model_name)
+        self._config = config
+        self._base_url = config.base_url.rstrip('/')
+
+    def _resolve_headers(self) -> Dict[str, str]:
+        api_key_env = self._config.api_key_env or "OPENAI_API_KEY"
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise LLMStreamError(
+                f"OpenAI API key not found. Set {api_key_env} in the environment to use the OpenAI backend."
             )
-        raise OllamaStreamError(
-            f"Ollama HTTP {exc.response.status_code}: {body_preview}"
-        ) from exc
-    except (httpx.RequestError, asyncio.TimeoutError) as exc:
-        raise OllamaStreamError(f"Ollama request failed: {exc}") from exc
+        headers = {"Authorization": f"Bearer {api_key}"}
+        if self._config.organization:
+            headers["OpenAI-Organization"] = self._config.organization
+        return headers
 
-    if not aggregated_tokens:
-        raise OllamaStreamError("No tokens returned from Ollama")
+    async def stream_response(
+        self,
+        payload: PolicyRequestPayload,
+        request_id: str,
+        start_time: float,
+        persona: Dict[str, Any],
+        family_mode: bool,
+        attempt: int,
+    ) -> AsyncIterator[str]:
+        messages = _build_messages(payload, family_mode)
+        aggregated_tokens: List[str] = []
+        finish_reason = None
+        timeout = httpx.Timeout(self._config.timeout_seconds)
+        headers = self._resolve_headers()
+        body = {
+            "model": self.model_name,
+            "messages": messages,
+            "stream": True,
+            "temperature": POLICY_TEMPERATURE,
+        }
 
-    content = "".join(aggregated_tokens).strip()
-    if not all(tag in content for tag in ("<speech>", "<mood>", "<actions>")):
-        raise OllamaStreamError("Invalid XML payload from Ollama")
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    "/chat/completions",
+                    headers=headers,
+                    json=body,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            logger.debug("Discarding non-JSON chunk from OpenAI: %s", data)
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        token = delta.get("content")
+                        if token:
+                            aggregated_tokens.append(token)
+                            yield _format_sse(
+                                "token",
+                                {
+                                    "token": token,
+                                    "index": len(aggregated_tokens) - 1,
+                                    "request_id": request_id,
+                                    "source": self.backend,
+                                },
+                            )
+                        finish_reason = choice.get("finish_reason") or finish_reason
+        except httpx.HTTPStatusError as exc:
+            body_preview = await _response_preview(exc.response)
+            raise LLMStreamError(
+                f"OpenAI HTTP {exc.response.status_code}: {body_preview}"
+            ) from exc
+        except (httpx.RequestError, asyncio.TimeoutError) as exc:
+            raise LLMStreamError(f"OpenAI request failed: {exc}") from exc
 
-    latency_ms = (time.perf_counter() - start_time) * 1000
-    stats = _extract_stats(final_metadata)
-    policy_response = PolicyResponse(
-        content=content,
-        latency_ms=round(latency_ms, 2),
-        source="ollama",
-        request_id=request_id,
-        meta={
-            "persona": persona,
-            "model": DEFAULT_MODEL,
-            "stats": stats,
-            "retries": attempt,
-        },
-    )
-    await _publish_policy_metric(
-        "policy.response",
-        {
-            "request_id": request_id,
-            "status": "ok",
-            "source": "ollama",
-            "latency_ms": round(latency_ms, 2),
-            "persona": persona,
-            "retries": attempt,
-            "text_length": len(payload.text),
-            "stats": stats,
-        },
-    )
-    yield _format_sse("final", policy_response.dict())
+        if not aggregated_tokens:
+            raise LLMStreamError("No tokens returned from OpenAI")
+
+        content = ''.join(aggregated_tokens).strip()
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        stats: Dict[str, Any] = {}
+        if finish_reason:
+            stats["finish_reason"] = finish_reason
+        policy_response = PolicyResponse(
+            content=content,
+            latency_ms=round(latency_ms, 2),
+            source=self.backend,
+            request_id=request_id,
+            meta={
+                "persona": persona,
+                "model": self.model_name,
+                "stats": stats,
+                "retries": attempt,
+            },
+        )
+        await _publish_policy_metric(
+            "policy.response",
+            {
+                "request_id": request_id,
+                "status": "ok",
+                "source": self.backend,
+                "latency_ms": round(latency_ms, 2),
+                "persona": persona,
+                "retries": attempt,
+                "text_length": len(payload.text),
+                "model": self.model_name,
+                "stats": stats,
+            },
+        )
+        yield _format_sse("final", policy_response.dict())
 
 
-async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
+class LocalTransformersClient(BaseLLMClient):
+    backend = "local"
+
+    def __init__(self, config: LocalLLMSettings, model_name: str) -> None:
+        super().__init__(model_name)
+        self._config = config
+        self._pipeline = None
+
+    def _ensure_pipeline(self):
+        if self._pipeline is not None:
+            return self._pipeline
+        transformers = _load_optional_module("transformers")
+        if transformers is None:
+            raise LLMStreamError(
+                "transformers is required for the local backend. Install it with pip install transformers torch."
+            )
+        model_id = self._config.model_path or self.model_name
+        tokenizer_id = self._config.tokenizer_path or model_id
+        device = (self._config.device or "auto").lower()
+        pipeline_kwargs: Dict[str, Any] = {}
+        if device != "auto":
+            if device in {"cpu", "-1"}:
+                pipeline_kwargs["device"] = -1
+            elif device in {"cuda", "0"}:
+                pipeline_kwargs["device"] = 0
+            else:
+                try:
+                    pipeline_kwargs["device"] = int(device)
+                except ValueError as exc:  # pragma: no cover - defensive guard
+                    raise LLMStreamError(f"Unsupported local device setting: {self._config.device}") from exc
+        try:
+            self._pipeline = transformers.pipeline(
+                "text-generation",
+                model=model_id,
+                tokenizer=tokenizer_id,
+                return_full_text=False,
+                **pipeline_kwargs,
+            )
+        except Exception as exc:  # pragma: no cover - dependency guard
+            raise LLMStreamError(
+                f"Failed to load local transformers model '{model_id}': {exc}"
+            ) from exc
+        return self._pipeline
+
+    @staticmethod
+    def _messages_to_prompt(messages: List[Dict[str, str]]) -> str:
+        lines = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "system":
+                prefix = "[SYSTEM]"
+            elif role == "assistant":
+                prefix = "[ASSISTANT]"
+            else:
+                prefix = "[USER]"
+            lines.append(f"{prefix} {content}")
+        lines.append("[ASSISTANT]")
+        return "\n".join(lines)
+
+    async def stream_response(
+        self,
+        payload: PolicyRequestPayload,
+        request_id: str,
+        start_time: float,
+        persona: Dict[str, Any],
+        family_mode: bool,
+        attempt: int,
+    ) -> AsyncIterator[str]:
+        pipeline = self._ensure_pipeline()
+        messages = _build_messages(payload, family_mode)
+        prompt = self._messages_to_prompt(messages)
+        loop = asyncio.get_running_loop()
+        try:
+            outputs = await loop.run_in_executor(
+                None,
+                lambda: pipeline(
+                    prompt,
+                    max_new_tokens=self._config.max_new_tokens,
+                    temperature=self._config.temperature,
+                    do_sample=self._config.temperature > 0,
+                ),
+            )
+        except Exception as exc:  # pragma: no cover - dependency guard
+            raise LLMStreamError(f"Local model generation failed: {exc}") from exc
+        if not outputs:
+            raise LLMStreamError("Local model produced no output")
+        generated = outputs[0]
+        text = (
+            generated.get("generated_text")
+            or generated.get("text")
+            or ""
+        ).strip()
+        if not text:
+            raise LLMStreamError("Local model returned empty response")
+        yield _format_sse(
+            "token",
+            {
+                "token": text,
+                "index": 0,
+                "request_id": request_id,
+                "source": self.backend,
+            },
+        )
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        stats = {"tokens": len(text.split())}
+        policy_response = PolicyResponse(
+            content=text,
+            latency_ms=round(latency_ms, 2),
+            source=self.backend,
+            request_id=request_id,
+            meta={
+                "persona": persona,
+                "model": self.model_name,
+                "stats": stats,
+                "retries": attempt,
+            },
+        )
+        await _publish_policy_metric(
+            "policy.response",
+            {
+                "request_id": request_id,
+                "status": "ok",
+                "source": self.backend,
+                "latency_ms": round(latency_ms, 2),
+                "persona": persona,
+                "retries": attempt,
+                "text_length": len(payload.text),
+                "model": self.model_name,
+                "stats": stats,
+            },
+        )
+        yield _format_sse("final", policy_response.dict())
+
+
+def _create_llm_client() -> BaseLLMClient:
+    backend = POLICY_BACKEND
+    if backend == "openai":
+        return OpenAILLMClient(OPENAI_CONFIG, MODEL_NAME)
+    if backend == "local":
+        return LocalTransformersClient(LOCAL_LLM_CONFIG, MODEL_NAME)
+    return OllamaLLMClient(OLLAMA_URL, MODEL_NAME)
+
+
+LLM_CLIENT = _create_llm_client()
+
+
+async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator[str]:
     request_id = uuid.uuid4().hex
     family_mode = _family_mode(payload)
     persona = _build_persona_snapshot(payload, family_mode)
     start = time.perf_counter()
     prompt_guard = await MODERATION.guard_prompt(payload.text)
-    source = "ollama"
+    source = LLM_CLIENT.backend
     if not prompt_guard.allowed:
         source = "moderation"
     response_moderation: Optional[Dict[str, str]] = None
@@ -344,7 +662,7 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
         "start",
         {
             "request_id": request_id,
-            "model": DEFAULT_MODEL,
+            "model": MODEL_NAME,
             "persona": persona,
             "source": source,
         },
@@ -392,13 +710,11 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
     for attempt in range(attempts_allowed + 1):
         try:
             attempts_made = attempt
-            async for chunk in _stream_ollama_response(
-                payload, request_id, start, persona, family_mode, attempt
-            ):
+            async for chunk in LLM_CLIENT.stream_response(payload, request_id, start, persona, family_mode, attempt):
                 event, data = _parse_sse(chunk)
                 if (
                     event == "token"
-                    and data.get("source") == "ollama"
+                    and data.get("source") == LLM_CLIENT.backend
                     and not response_moderation
                 ):
                     guard = await MODERATION.guard_response(data.get("token", ""))
@@ -432,10 +748,11 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
                         chunk = _format_sse("final", data)
                 yield chunk
             return
-        except OllamaStreamError as exc:
+        except LLMStreamError as exc:
             last_error = exc
             logger.warning(
-                "Ollama stream failed (attempt %s/%s) for request %s: %s",
+                "%s stream failed (attempt %s/%s) for request %s: %s",
+                LLM_CLIENT.backend,
                 attempt + 1,
                 attempts_allowed + 1,
                 request_id,
@@ -465,6 +782,7 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
     )
     meta: Dict[str, Any] = {
         "persona": persona,
+        "model": MODEL_NAME,
         "fallback": True,
         "status": "error",
         "error": error_text,
@@ -475,7 +793,7 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
     response = PolicyResponse(
         content="",
         latency_ms=round(latency_ms, 2),
-        source="ollama",
+        source=LLM_CLIENT.backend,
         request_id=request_id,
         meta=meta,
     )
@@ -484,9 +802,10 @@ async def policy_event_generator(payload: PolicyRequest) -> AsyncIterator[str]:
         {
             "request_id": request_id,
             "status": "error",
-            "source": "ollama",
+            "source": LLM_CLIENT.backend,
             "latency_ms": round(latency_ms, 2),
             "persona": persona,
+            "model": MODEL_NAME,
             "retries": retries,
             "text_length": len(payload.text),
             "error": error_text,
@@ -499,7 +818,7 @@ app = FastAPI(title="Kitsu Policy Worker", version="0.3.0")
 
 
 @app.post("/respond")
-async def respond(payload: PolicyRequest) -> StreamingResponse:
+async def respond(payload: PolicyRequestPayload) -> StreamingResponse:
     if not payload.text.strip():  # pragma: no cover - defensive validation
         raise HTTPException(status_code=422, detail="Prompt must not be empty")
     logger.info(
@@ -520,7 +839,11 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "apps.policy_worker.main:app",
-        host="0.0.0.0",
-        port=8081,
+        host=policy_cfg.bind_host,
+        port=policy_cfg.bind_port,
         reload=os.getenv("UVICORN_RELOAD") == "1",
     )
+
+
+
+

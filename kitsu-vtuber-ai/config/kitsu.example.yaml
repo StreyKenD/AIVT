@@ -1,0 +1,133 @@
+version: 1
+
+orchestrator:
+  bind_host: 0.0.0.0
+  bind_port: 8000
+  public_url: http://127.0.0.1:8000
+  policy_url: null
+  policy_timeout_seconds: 40.0
+  tts_url: null
+  tts_timeout_seconds: 60.0
+  telemetry_url: http://127.0.0.1:8001
+  telemetry_api_key: ""
+  cors_allow_all: false
+  cors_allow_origins: []
+  gpu_metrics_interval_seconds: 30.0
+
+policy:
+  bind_host: 0.0.0.0
+  bind_port: 8081
+  endpoint_url: http://127.0.0.1:8081
+  model_name: mixtral:8x7b-instruct-q4_K_M
+  backend: ollama
+  family_friendly: true
+  stream_timeout: 30.0
+  retry_attempts: 1
+  retry_backoff: 1.0
+  temperature: 0.65
+  ollama_url: http://localhost:11434
+  openai:
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4o-mini
+    base_url: https://api.openai.com/v1
+    organization: ""
+    timeout_seconds: 60.0
+  local:
+    engine: transformers
+    model_path: ""
+    tokenizer_path: ""
+    device: auto
+    max_new_tokens: 512
+    temperature: 0.7
+
+persona:
+  default: default
+  presets:
+    default:
+      style: kawaii
+      chaos_level: 0.2
+      energy: 0.5
+      family_mode: true
+      system_prompt: |
+        You are Kitsu.exe, the playful fox VTuber. Embrace wholesome chaos while staying friendly.
+    cozy:
+      style: calm
+      chaos_level: 0.15
+      energy: 0.35
+      family_mode: true
+      system_prompt: |
+        You are Kitsu.exe winding down for a chill segment. Keep replies warm, gentle, and encouraging.
+    hype:
+      style: chaotic
+      chaos_level: 0.75
+      energy: 0.85
+      family_mode: true
+      system_prompt: |
+        You are Kitsu.exe during a hype train: energetic, excited, and cheering on the chat without breaking PG-13.
+  presets_file: null
+
+tts:
+  bind_host: 0.0.0.0
+  bind_port: 8070
+  endpoint_url: http://127.0.0.1:8070
+  timeout_seconds: 60.0
+  cache_dir: artifacts/tts_cache
+  backend: auto
+  fallback_backends:
+    - piper
+  coqui:
+    model_name: tts_models/en/vctk/vits
+    default_speaker: ""
+    speaker_map: {}
+  piper:
+    binary: piper
+    model: ""
+    config: ""
+    default_speaker: ""
+    speaker_map: {}
+  bark:
+    voice_preset: v2/en_speaker_9
+    history_prompt: ""
+    text_temperature: 0.7
+    waveform_temperature: 0.7
+    speaker_prompts: {}
+  xtts:
+    model_name: tts_models/multilingual/multi-dataset/xtts_v2
+    default_speaker_wav: ""
+    default_speaker_name: ""
+    default_language: en
+    speaker_wavs: {}
+    language_overrides: {}
+
+asr:
+  backend: whisper
+  sherpa:
+    config_file: null
+    tokens: ""
+    encoder: ""
+    decoder: ""
+    joiner: ""
+    model_type: transducer
+    num_threads: 2
+    provider: cpu
+    decoding_method: greedy_search
+  model_name: small.en
+  orchestrator_url: null
+  sample_rate: 16000
+  frame_duration_ms: 20
+  partial_interval_ms: 200
+  silence_duration_ms: 500
+  vad_mode: webrtc
+  vad_aggressiveness: 2
+  input_device: null
+  fake_audio: false
+  device_preference: cuda
+  compute_type: null
+  allow_non_english: false
+
+memory:
+  restore_context: false
+  restore_window_seconds: 7200.0
+  buffer_size: 40
+  summary_interval: 6
+  history_path: data/memory_history.json

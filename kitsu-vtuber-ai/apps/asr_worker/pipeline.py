@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Optional
+
+from libs.contracts import ASREventPayload, ASRFinalEvent, ASRPartialEvent
 
 from .config import ASRConfig
 from .logger import logger
@@ -12,9 +15,28 @@ from .orchestrator import OrchestratorPublisher
 from .transcription import Transcriber
 from .vad import VoiceActivityDetector
 
-DEFAULT_ENERGY_THRESHOLD = float(
-    os.getenv("ASR_ENERGY_THRESHOLD", "300.0")
-)  # pragma: no mutate
+
+def _load_energy_threshold() -> float:
+    raw = os.getenv("ASR_ENERGY_THRESHOLD")
+    if raw is None or not raw.strip():
+        return 300.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid ASR_ENERGY_THRESHOLD value '%s'; falling back to 300.0", raw
+        )
+        return 300.0
+    if not math.isfinite(value) or value < 0:
+        logger.warning(
+            "ASR_ENERGY_THRESHOLD value '%s' is not a finite non-negative number; using 300.0",
+            raw,
+        )
+        return 300.0
+    return value
+
+
+DEFAULT_ENERGY_THRESHOLD = _load_energy_threshold()  # pragma: no mutate
 
 
 class SimpleASRPipeline:
@@ -40,7 +62,12 @@ class SimpleASRPipeline:
         self._segment_index = 0
         self._last_partial_at = 0.0
         self._last_partial_text = ""
-        self._energy_threshold = energy_threshold
+        if energy_threshold < 0:
+            logger.warning(
+                "ASR energy threshold %.2f is negative; clamping to 0", energy_threshold
+            )
+            energy_threshold = 0.0
+        self._energy_threshold = float(energy_threshold)
         self._min_duration = max(0, min_duration_ms)
         silence_ms = silence_duration_ms or config.silence_duration_ms
         self._silence_required = max(
@@ -50,12 +77,11 @@ class SimpleASRPipeline:
                 // config.frame_duration_ms
             ),
         )
-        env_flag = os.getenv("ASR_ALLOW_NON_ENGLISH", "0")
-        self._allow_non_english = (
-            allow_non_english
-            if allow_non_english is not None
-            else env_flag.lower() in {"1", "true", "yes"}
-        )
+        if allow_non_english is None:
+            env_flag = os.getenv("ASR_ALLOW_NON_ENGLISH", "0")
+            self._allow_non_english = env_flag.lower() in {"1", "true", "yes"}
+        else:
+            self._allow_non_english = allow_non_english
         if self._allow_non_english:
             logger.debug("ASR pipeline allowing all languages for transcripts")
         self._partial_interval = max(config.partial_interval_ms / 1000, 0.05)
@@ -161,16 +187,16 @@ class SimpleASRPipeline:
                 text_length=len(text),
             )
             return
-        payload: Dict[str, Any] = {
-            "segment": self._segment_index,
-            "text": text,
-            "confidence": confidence,
-            "language": language,
-            "started_at": self._segment_started,
-            "ended_at": ended_at,
-            "duration_ms": duration_ms,
-        }
-        await self._publish_event("asr_final", payload)
+        final_event = ASRFinalEvent(
+            segment=self._segment_index,
+            text=text,
+            confidence=confidence,
+            language=language,
+            started_at=self._segment_started,
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+        )
+        await self._publish_event(final_event)
         await self._emit_telemetry_final(
             duration_ms=duration_ms,
             confidence=confidence,
@@ -201,16 +227,16 @@ class SimpleASRPipeline:
         self._last_partial_text = text
         self._last_partial_at = timestamp
         latency_ms = (timestamp - self._segment_started) * 1000
-        payload: Dict[str, Any] = {
-            "segment": self._segment_index,
-            "text": text,
-            "confidence": confidence,
-            "language": language,
-            "started_at": self._segment_started,
-            "ended_at": timestamp,
-            "latency_ms": latency_ms,
-        }
-        await self._publish_event("asr_partial", payload)
+        partial_event = ASRPartialEvent(
+            segment=self._segment_index,
+            text=text,
+            confidence=confidence,
+            language=language,
+            started_at=self._segment_started,
+            ended_at=timestamp,
+            latency_ms=latency_ms,
+        )
+        await self._publish_event(partial_event)
         await self._emit_telemetry_partial(
             latency_ms=latency_ms,
             text=text,
@@ -246,13 +272,13 @@ class SimpleASRPipeline:
         normalized = language.lower()
         return normalized.startswith("en")
 
-    async def _publish_event(self, event_type: str, payload: Dict[str, Any]) -> None:
+    async def _publish_event(self, event: ASREventPayload) -> None:
         if self._orchestrator is None:
             return
         try:
-            await self._orchestrator.publish(event_type, payload)
+            await self._orchestrator.publish(event)
         except Exception:  # pragma: no cover - network guard
-            logger.warning("Failed to publish %s to orchestrator", event_type, exc_info=True)
+            logger.warning("Failed to publish %s to orchestrator", event.type, exc_info=True)
 
     async def _emit_telemetry_partial(
         self,

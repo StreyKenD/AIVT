@@ -14,6 +14,10 @@ import socket
 from urllib.parse import urlparse
 from typing import Callable, Dict, Iterable, List, Optional
 
+import httpx
+
+from libs.config import get_app_config
+
 
 logger = logging.getLogger("kitsu.pipeline")
 
@@ -26,6 +30,15 @@ class ServiceSpec:
     restart_delay: float = 5.0
     env_overrides: Dict[str, str] = field(default_factory=dict)
     predicate: Optional[Callable[[], tuple[bool, Optional[str]]]] = None
+    health_check: Optional["HealthCheckSpec"] = None
+
+
+@dataclass(slots=True)
+class HealthCheckSpec:
+    url: str
+    interval: float = 15.0
+    timeout: float = 5.0
+    retries: int = 3
 
 
 async def _pipe_stream(
@@ -43,6 +56,47 @@ async def _pipe_stream(
             logger.log(level, "[%s] %s", service, line.decode(errors="replace").rstrip())
     except asyncio.CancelledError:  # pragma: no cover - shutdown path
         pass
+
+
+async def _monitor_health(
+    service: str,
+    spec: HealthCheckSpec,
+    process: asyncio.subprocess.Process,
+    stop_event: asyncio.Event,
+) -> None:
+    await asyncio.sleep(spec.interval)
+    failures = 0
+    async with httpx.AsyncClient(timeout=spec.timeout) as client:
+        while not stop_event.is_set():
+            if process.returncode is not None:
+                break
+            try:
+                response = await client.get(spec.url)
+                if response.status_code >= 500:
+                    raise RuntimeError(f"HTTP {response.status_code}")
+                failures = 0
+            except Exception as exc:  # pragma: no cover - network guard
+                failures += 1
+                logger.warning(
+                    "%s health check failed (%s/%s): %s",
+                    service,
+                    failures,
+                    spec.retries,
+                    exc,
+                )
+                if failures >= spec.retries:
+                    logger.error(
+                        "%s deemed unhealthy after %s failures; terminating process",
+                        service,
+                        failures,
+                    )
+                    with contextlib.suppress(ProcessLookupError):
+                        process.terminate()
+                    break
+            else:
+                await asyncio.sleep(spec.interval)
+                continue
+            await asyncio.sleep(spec.interval)
 
 
 async def _run_service(
@@ -89,6 +143,12 @@ async def _run_service(
 
         stdout_task = asyncio.create_task(_pipe_stream(spec.name, process.stdout, logging.INFO))
         stderr_task = asyncio.create_task(_pipe_stream(spec.name, process.stderr, logging.ERROR))
+        health_task = None
+        if spec.health_check is not None:
+            health_task = asyncio.create_task(
+                _monitor_health(spec.name, spec.health_check, process, stop_event),
+                name=f"health:{spec.name}",
+            )
         wait_process = asyncio.create_task(process.wait())
         wait_stop = asyncio.create_task(stop_event.wait())
 
@@ -110,11 +170,17 @@ async def _run_service(
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
                     await process.wait()
-            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            await asyncio.gather(
+                *(task for task in (stdout_task, stderr_task, health_task) if task),
+                return_exceptions=True,
+            )
             break
 
         returncode = process.returncode
-        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        await asyncio.gather(
+            *(task for task in (stdout_task, stderr_task, health_task) if task),
+            return_exceptions=True,
+        )
         logger.info("%s exited with code %s", spec.name, returncode)
 
         if not spec.restart or returncode == 0:
@@ -219,6 +285,13 @@ def _is_local_host(host: str) -> bool:
         return normalized in {"localhost"} or normalized.startswith("127.")
 
 
+def _health_host(host: str) -> str:
+    normalized = host.strip().lower()
+    if normalized in {"0.0.0.0", "::", ""}:
+        return "127.0.0.1"
+    return host
+
+
 def _combine_predicates(
     predicates: Iterable[Callable[[], tuple[bool, Optional[str]]]]
 ) -> Callable[[], tuple[bool, Optional[str]]]:
@@ -235,13 +308,22 @@ def _combine_predicates(
 
 
 def _service_specs(python: str) -> Iterable[ServiceSpec]:
-    orch_host = os.getenv("ORCH_HOST", "127.0.0.1")
-    orch_port = os.getenv("ORCH_PORT", "8000")
+    settings = get_app_config()
+    orch_cfg = settings.orchestrator
+    policy_cfg = settings.policy
+    tts_cfg = settings.tts
+
+    orch_host = os.getenv("ORCH_HOST", orch_cfg.bind_host)
+    orch_port = os.getenv("ORCH_PORT", str(orch_cfg.bind_port))
+    orch_port_int = int(orch_port)
     control_host = os.getenv("CONTROL_PANEL_HOST", "127.0.0.1")
     control_port = os.getenv("CONTROL_PANEL_PORT", "8100")
-    policy_host = os.getenv("POLICY_HOST", "0.0.0.0")
-    policy_port = int(os.getenv("POLICY_PORT", "8081"))
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    control_port_int = int(control_port)
+    policy_host = os.getenv("POLICY_HOST", policy_cfg.bind_host)
+    policy_port = int(os.getenv("POLICY_PORT", str(policy_cfg.bind_port)))
+    tts_host = os.getenv("TTS_HOST", tts_cfg.bind_host)
+    tts_port = int(os.getenv("TTS_PORT", str(tts_cfg.bind_port)))
+    ollama_url = os.getenv("OLLAMA_URL", policy_cfg.ollama_url)
     ollama_host, ollama_port = _ollama_host_port(ollama_url)
     ollama_autostart = _ollama_autostart_enabled()
 
@@ -290,7 +372,13 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
                     "--port",
                     orch_port,
                 ],
-                predicate=_port_predicate(orch_host, int(orch_port)),
+                predicate=_port_predicate(orch_host, orch_port_int),
+                health_check=HealthCheckSpec(
+                    url=f"http://{_health_host(orch_host)}:{orch_port_int}/health",
+                    interval=20.0,
+                    timeout=5.0,
+                    retries=3,
+                ),
             ),
             ServiceSpec(
                 name="control_panel",
@@ -304,20 +392,34 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
                     "--port",
                     control_port,
                 ],
-                predicate=_port_predicate(control_host, int(control_port)),
+                predicate=_port_predicate(control_host, control_port_int),
             ),
             ServiceSpec(
                 name="policy_worker",
                 command=[python, "-m", "apps.policy_worker.main"],
-                predicate=_combine_predicates(
-                    policy_predicates
+                predicate=_combine_predicates(policy_predicates),
+                health_check=HealthCheckSpec(
+                    url=f"http://{_health_host(policy_host)}:{policy_port}/health",
+                    interval=20.0,
+                    timeout=5.0,
+                    retries=3,
                 ),
             ),
             ServiceSpec(
                 name="asr_worker",
                 command=[python, "-m", "apps.asr_worker.main"],
             ),
-            ServiceSpec(name="tts_worker", command=[python, "-m", "apps.tts_worker.main"]),
+            ServiceSpec(
+                name="tts_worker",
+                command=[python, "-m", "apps.tts_worker.main"],
+                predicate=_port_predicate(tts_host, tts_port),
+                health_check=HealthCheckSpec(
+                    url=f"http://{_health_host(tts_host)}:{tts_port}/health",
+                    interval=20.0,
+                    timeout=5.0,
+                    retries=3,
+                ),
+            ),
             ServiceSpec(
                 name="avatar_controller",
                 command=[python, "-m", "apps.avatar_controller.main"],

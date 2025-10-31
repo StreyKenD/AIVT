@@ -427,12 +427,21 @@ function isMemorySummary(value: unknown): value is MemorySummary {
     return false;
   }
 
-  if (!isRecord(value.knobs)) {
+  const metadataSource = (() => {
+    if (isRecord(value.metadata)) {
+      return value.metadata as Record<string, unknown>;
+    }
+    if (isRecord(value.knobs)) {
+      return value.knobs as Record<string, unknown>;
+    }
+    return null;
+  })();
+
+  if (!metadataSource) {
     return false;
   }
 
-  const knobs = value.knobs as Record<string, unknown>;
-  if (!Object.values(knobs).every(isNumber)) {
+  if (!Object.values(metadataSource).every(isNumber)) {
     return false;
   }
 

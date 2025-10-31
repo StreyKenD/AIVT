@@ -31,9 +31,11 @@ git clone https://github.com/<your-org>/AIVT.git
 cd AIVT
 
 cp kitsu-vtuber-ai/.env.example kitsu-vtuber-ai/.env
-# Optional – telemetry pieces
+# Optional — telemetry pieces
 cp kitsu-telemetry/.env.example kitsu-telemetry/.env
 cp kitsu-telemetry/ui/.env.example kitsu-telemetry/ui/.env.local
+
+cp kitsu-vtuber-ai/config/kitsu.example.yaml kitsu-vtuber-ai/config/kitsu.yaml
 ```
 
 Fill in, at minimum:
@@ -42,10 +44,13 @@ Fill in, at minimum:
 - Twitch: `TWITCH_CHANNEL`, `TWITCH_OAUTH_TOKEN`
 - VTube Studio: `VTS_URL`, `VTS_AUTH_TOKEN`
 - Audio: set `ASR_INPUT_DEVICE` to the numeric ID printed by `poetry run python -m apps.asr_worker.devices`
-- Set `ASR_FAKE_AUDIO=0` to capture from your microphone (the runner defaults to the safe `1` unless overridden)
+- Set `ASR_FAKE_AUDIO=0` to capture from your microphone (default behaviour). Set it to `1` to keep the worker silent during tests.
+- Optional: set `MIC_TEST_OUTPUT=/path/to/log.txt` to duplicate the mic tester transcript into a log file while keeping console output.
 - Optional: `PIPELINE_DISABLE` (comma-separated services to skip, e.g. `twitch_ingest,avatar_controller`)
 
 Keep everything on `127.0.0.1` unless you truly need remote access.
+
+> `config/kitsu.yaml` is the authoritative source for orchestrator/policy/tts/asr settings, persona presets, and memory options. `.env` is now mostly reserved for secrets and ad-hoc overrides. Set `KITSU_CONFIG_FILE` to load an alternative YAML profile (for example `config/kitsu.stream.yaml`).
 
 ---
 
@@ -93,10 +98,22 @@ poetry run python -m apps.pipeline_runner.main
 | --- | --- |
 | `PIPELINE_DISABLE=twitch_ingest,avatar_controller` | Skip specific services |
 | `ASR_INPUT_DEVICE=32` | Pick the PortAudio device index detected by the listing command |
-| `ASR_FAKE_AUDIO=1` | Force silent (fake) audio |
-| `TTS_DISABLE_COQUI=1` or `TTS_DISABLE_PIPER=1` | Force a single TTS backend for debugging |
+| `ASR_FAKE_AUDIO=1` | Force silent (fake) audio (default is `0`) |
+| `ASR_ALLOW_NON_ENGLISH=1` | Allow transcripts in any detected language (default keeps English-only filtering) |
+| `TTS_BACKEND=xtts` / `TTS_FALLBACKS=piper` | Switch TTS synthesizers on the fly without editing the YAML |
 
 Services log their status on startup; missing env vars are reported and the runner continues instead of crashing.
+The pipeline runner now polls each service's `/health` endpoint (policy, TTS, orchestrator) and force-restarts any process that stops responding, logging restart counts so you can spot flapping components early.
+
+### Quick conversation (headless sanity check)
+
+With the stack running, you can hit the orchestrator directly without OBS/Telemetry:
+
+```bash
+poetry run python kitsu-vtuber-ai/examples/quick_conversation.py --text "Hey Kitsu, testing from CLI!"
+```
+
+The script posts to `/chat/respond`, prints the streamed response, and records the turn in memory. Pass `--preset cozy` to switch personas before the request, or `--no-tts` to keep the TTS worker idle.
 
 ---
 
@@ -119,10 +136,12 @@ This was the old workflow; the pipeline runner simply does the above for you wit
 Run the key test suites:
 
 ```bash
-poetry run pytest tests/test_asr_worker.py tests/test_asr_pipeline.py tests/test_telemetry_integration.py
+poetry run pytest tests/test_config_loader.py tests/test_pipeline_runner.py \
+                 tests/test_orchestrator.py::test_chat_pipeline_hits_policy_and_tts \
+                 tests/test_asr_worker.py tests/test_asr_pipeline.py tests/test_telemetry_integration.py
 ```
 
-These cover the ASR segmentation/transcription path plus TTS telemetry instrumentation.
+These checks validate config/env merging, pipeline supervision, the chat-to-TTS path, and the existing ASR/telemetry flows.
 
 ---
 

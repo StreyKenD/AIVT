@@ -4,13 +4,13 @@ from __future__ import annotations
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from . import storage
 from .log_reader import LogReaderError, query_logs
@@ -26,14 +26,16 @@ class TelemetryEventIn(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict, description="Associated data")
     source: str | None = Field(None, description="Optional event source")
 
-    @validator("type")
+    @field_validator("type")
+    @classmethod
     def _validate_type(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("type must be a non-empty string")
         return value
 
-    @validator("payload")
+    @field_validator("payload")
+    @classmethod
     def _validate_payload(cls, value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise ValueError("payload must be an object")
@@ -46,14 +48,16 @@ class LegacyTelemetryIn(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict, description="Associated data")
     created_at: datetime | None = Field(None, description="Optional legacy timestamp")
 
-    @validator("event_type")
+    @field_validator("event_type")
+    @classmethod
     def _validate_event_type(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("event_type must be a non-empty string")
         return value
 
-    @validator("payload")
+    @field_validator("payload")
+    @classmethod
     def _validate_payload(cls, value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise ValueError("payload must be an object")
@@ -116,11 +120,11 @@ def _coerce_event(item: Any) -> TelemetryEventIn:
         )
 
     if "type" in item and "ts" in item:
-        return TelemetryEventIn.parse_obj(item)
+        return TelemetryEventIn.model_validate(item)
 
     if "event_type" in item:
-        legacy = LegacyTelemetryIn.parse_obj(item)
-        ts_value = legacy.created_at or datetime.utcnow()
+        legacy = LegacyTelemetryIn.model_validate(item)
+        ts_value = legacy.created_at or datetime.now(timezone.utc)
         return TelemetryEventIn(
             type=legacy.event_type,
             ts=ts_value,
@@ -220,11 +224,16 @@ async def list_logs(
     level: str | None = Query(None, description="Filter by log level"),
     since: datetime | None = Query(None, description="Only entries newer than this timestamp"),
     contains: str | None = Query(None, description="Substring search across message and extras"),
-    order: str = Query("desc", regex="^(?i)(asc|desc)$", description="Sort order: asc or desc"),
+    order: str = Query("desc", description="Sort order: asc or desc"),
     limit: int = Query(200, ge=1, le=1000, description="Maximum number of log entries"),
     _: None = Depends(_require_api_key),
 ) -> list[LogEntryOut]:
     direction = order.lower()
+    if direction not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="order must be 'asc' or 'desc'",
+        )
     try:
         records = await asyncio.to_thread(
             query_logs,

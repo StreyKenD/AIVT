@@ -12,6 +12,8 @@ pytest.importorskip("fastapi", reason="policy worker depende de FastAPI")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from libs.config import reload_app_config
+
 
 class PolicyWorkerModule(Protocol):
     app: FastAPI
@@ -19,6 +21,7 @@ class PolicyWorkerModule(Protocol):
 
 
 def _reload_policy_module() -> PolicyWorkerModule:
+    reload_app_config()
     module = importlib.import_module("apps.policy_worker.main")
     return cast(PolicyWorkerModule, importlib.reload(module))
 
@@ -148,6 +151,95 @@ def test_policy_worker_streams_from_ollama(monkeypatch: pytest.MonkeyPatch) -> N
     assert "persona" in final_payload["meta"]
 
 
+def test_policy_worker_streams_from_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICY_BACKEND", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    module = _reload_policy_module()
+
+    lines = [
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": "<speech>Hi chat!</speech>"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": "<mood>kawaii</mood>"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": "<actions>wave</actions>"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        ),
+        "data: [DONE]",
+    ]
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", _fake_client_factory(lines))
+
+    with TestClient(module.app) as client:
+        with client.stream("POST", "/respond", json={"text": "hi"}) as response:
+            events = _consume_sse(response)
+
+    final_payload = next(payload for event, payload in events if event == "final")
+    assert final_payload["source"] == "openai"
+    assert final_payload["meta"]["model"] == module.MODEL_NAME
+    assert final_payload["meta"]["stats"]["finish_reason"] == "stop"
+    assert final_payload["content"].startswith("<speech>")
+
+
+def test_policy_worker_streams_from_local_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLICY_BACKEND", "local")
+    monkeypatch.setenv("LLM_MODEL_NAME", "local-fox")
+    output = "<speech>heck yeah!</speech><mood>chaotic</mood><actions>wave</actions>"
+    module = _reload_policy_module()
+
+    class _StubPipeline:
+        def __call__(self, *_: object, **__: object) -> List[dict[str, str]]:
+            return [{"generated_text": output}]
+
+    class _StubTransformers:
+        def pipeline(self, *_: object, **__: object) -> _StubPipeline:
+            return _StubPipeline()
+
+    monkeypatch.setattr(
+        module,
+        "_load_optional_module",
+        lambda name: _StubTransformers() if name == "transformers" else None,
+    )
+
+    with TestClient(module.app) as client:
+        with client.stream("POST", "/respond", json={"text": "hi"}) as response:
+            events = _consume_sse(response)
+
+    final_payload = next(payload for event, payload in events if event == "final")
+    assert final_payload["source"] == "local"
+    assert final_payload["meta"]["model"] == module.MODEL_NAME
+    assert final_payload["meta"]["stats"]["tokens"] > 0
+    assert final_payload["content"] == output
+
+
 def test_policy_worker_retries_and_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICY_RETRY_ATTEMPTS", "1")
     module = _reload_policy_module()
@@ -170,6 +262,7 @@ def test_policy_worker_retries_and_reports_error(monkeypatch: pytest.MonkeyPatch
     assert final_payload["meta"]["status"] == "error"
     assert "error" in final_payload["meta"]
     assert final_payload["meta"]["retries"] == 2
+    assert final_payload["meta"]["model"] == module.MODEL_NAME
 
 
 def test_policy_worker_blocks_prompt_via_moderation(

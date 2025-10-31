@@ -40,8 +40,8 @@ class PatternVAD:
 class Recorder:
     events: List[Tuple[str, dict[str, object]]]
 
-    async def publish(self, event_type: str, payload: dict[str, object]) -> None:
-        self.events.append((event_type, payload))
+    async def publish(self, event) -> None:
+        self.events.append((event.type, event.dict()))
 
 
 async def iter_frames(frames: List[bytes], delay: float) -> AsyncIterator[bytes]:

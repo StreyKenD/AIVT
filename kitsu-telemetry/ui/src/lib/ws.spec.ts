@@ -84,7 +84,7 @@ describe('createTelemetryStream', () => {
             id: 42,
             summary_text: 'Summary',
             mood_state: 'calm',
-            knobs: { focus: 0.2, energy: 0.8 },
+            metadata: { focus: 0.2, energy: 0.8 },
             ts: timestamp
           }
         },

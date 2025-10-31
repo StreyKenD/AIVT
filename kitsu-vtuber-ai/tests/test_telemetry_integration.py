@@ -6,6 +6,8 @@ from typing import List, Tuple
 import pytest
 
 from apps.tts_worker.service import TTSService
+from libs.contracts import PolicyRequestPayload
+from libs.config.models import TTSSettings
 
 
 class StubTelemetry:
@@ -16,13 +18,15 @@ class StubTelemetry:
         self.calls.append((event_type, payload))
 
 
-def test_tts_service_emits_metrics(monkeypatch, tmp_path) -> None:
+def test_tts_service_emits_metrics(tmp_path) -> None:
     async def _scenario() -> None:
-        monkeypatch.setenv("TTS_DISABLE_COQUI", "1")
-        monkeypatch.setenv("TTS_DISABLE_PIPER", "1")
-        monkeypatch.setenv("TTS_OUTPUT_DIR", str(tmp_path))
         telemetry = StubTelemetry()
-        service = TTSService(telemetry=telemetry)
+        config = TTSSettings(
+            cache_dir=str(tmp_path),
+            backend="silent",
+            fallback_backends=[],
+        )
+        service = TTSService(config=config, telemetry=telemetry)
         worker = asyncio.create_task(service.worker())
         try:
             result = await asyncio.wait_for(
@@ -36,6 +40,40 @@ def test_tts_service_emits_metrics(monkeypatch, tmp_path) -> None:
             assert payload["status"] == "ok"
             assert payload["cached"] is False
             assert payload["text_length"] == len("konnichiwa chat")
+            assert payload["backend"] == "silentsynthesizer"
+        finally:
+            worker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+
+    asyncio.run(_scenario())
+
+
+def test_tts_service_uses_disk_cache(tmp_path) -> None:
+    async def _scenario() -> None:
+        telemetry = StubTelemetry()
+        config = TTSSettings(
+            cache_dir=str(tmp_path),
+            backend="silent",
+            fallback_backends=[],
+        )
+        service = TTSService(config=config, telemetry=telemetry)
+        worker = asyncio.create_task(service.worker())
+        try:
+            first = await asyncio.wait_for(
+                service.enqueue("cached response please", request_id="req-1"), timeout=5
+            )
+            second = await asyncio.wait_for(
+                service.enqueue("cached response please", request_id="req-2"), timeout=5
+            )
+            await asyncio.sleep(0)
+            assert first.cached is False
+            assert second.cached is True
+            assert first.audio_path == second.audio_path
+            assert telemetry.calls, "Expected telemetry metric"
+            final_payload = telemetry.calls[-1][1]
+            assert final_payload["cached"] is True
+            assert final_payload["backend"] == "silentsynthesizer"
         finally:
             worker.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -126,7 +164,7 @@ def test_policy_generator_emits_metrics(monkeypatch) -> None:
 
         monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: _StubClient())
 
-        payload = module.PolicyRequest(
+        payload = PolicyRequestPayload(
             text="hello there",
             persona_style="kawaii",
             chaos_level=0.3,
