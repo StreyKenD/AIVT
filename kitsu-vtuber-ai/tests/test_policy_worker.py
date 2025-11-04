@@ -18,6 +18,7 @@ from libs.config import reload_app_config
 class PolicyWorkerModule(Protocol):
     app: FastAPI
     httpx: ModuleType
+    MODEL_NAME: str
 
 
 def _reload_policy_module() -> PolicyWorkerModule:
@@ -240,7 +241,9 @@ def test_policy_worker_streams_from_local_backend(
     assert final_payload["content"] == output
 
 
-def test_policy_worker_retries_and_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_policy_worker_retries_and_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("POLICY_RETRY_ATTEMPTS", "1")
     module = _reload_policy_module()
 

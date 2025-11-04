@@ -8,7 +8,9 @@ import pytest
 from libs.config import reload_app_config
 
 
-def test_env_overrides_take_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_env_overrides_take_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_file = tmp_path / "kitsu.yaml"
     config_file.write_text(
         textwrap.dedent(

@@ -91,13 +91,18 @@ async def main() -> int:
             return 1
 
     if response.status_code == 202:
-        print("Policy worker is processing the request (HTTP 202). Check /stream for token events.")
+        print(
+            "Policy worker is processing the request (HTTP 202). Check /stream for token events."
+        )
         return 0
 
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        print(f"Orchestrator returned HTTP {exc.response.status_code}: {exc}", file=sys.stderr)
+        print(
+            f"Orchestrator returned HTTP {exc.response.status_code}: {exc}",
+            file=sys.stderr,
+        )
         try:
             error_payload = exc.response.json()
         except ValueError:

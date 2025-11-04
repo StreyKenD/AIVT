@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import httpx
 import yaml
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from libs.common import configure_json_logging
 from libs.config import PersonaPreset, PersonaSettings, get_app_config
@@ -19,6 +20,7 @@ from .broker import EventBroker
 from .deps import set_broker, set_state
 from .routes import ALL_ROUTERS
 from .state import OrchestratorState
+from .telemetry import TelemetryDispatcher
 
 
 configure_json_logging("orchestrator")
@@ -31,9 +33,9 @@ tts_cfg = settings.tts
 memory_cfg = settings.memory
 persona_cfg = settings.persona
 
-POLICY_URL = policy_cfg.url
+POLICY_URL = cast(str, policy_cfg.url)
 POLICY_TIMEOUT_SECONDS = orchestrator_cfg.policy_timeout_seconds
-TTS_API_URL = tts_cfg.url
+TTS_API_URL = cast(str, tts_cfg.url)
 TTS_TIMEOUT_SECONDS = orchestrator_cfg.tts_timeout_seconds
 
 _policy_client: Optional[httpx.AsyncClient] = None
@@ -52,7 +54,9 @@ def _load_persona_presets(config: PersonaSettings) -> Dict[str, PersonaPreset]:
         try:
             raw = preset_path.read_text(encoding="utf-8")
         except OSError as exc:  # pragma: no cover - defensive guard
-            logger.warning("Failed to read persona presets file %s: %s", preset_path, exc)
+            logger.warning(
+                "Failed to read persona presets file %s: %s", preset_path, exc
+            )
         else:
             loaded = yaml.safe_load(raw) or {}
             if isinstance(loaded, dict):
@@ -60,7 +64,9 @@ def _load_persona_presets(config: PersonaSettings) -> Dict[str, PersonaPreset]:
                     try:
                         presets[name] = PersonaPreset.model_validate(value)
                     except Exception as exc:  # pragma: no cover - malformed preset
-                        logger.debug("Invalid preset %s in %s: %s", name, preset_path, exc)
+                        logger.debug(
+                            "Invalid preset %s in %s: %s", name, preset_path, exc
+                        )
     return presets
 
 
@@ -69,6 +75,7 @@ async def _invoke_policy(
 ) -> Optional[Dict[str, Any]]:
     if _policy_client is None:
         logger.warning("Policy client is not initialised; skipping LLM request")
+        state._set_module_health("policy_worker", "offline")  # type: ignore[attr-defined]
         return None
     final_event: Optional[Dict[str, Any]] = None
     current_event: Optional[str] = None
@@ -97,6 +104,7 @@ async def _invoke_policy(
                         final_event = data
     except Exception:  # pragma: no cover - network guard
         logger.exception("Policy worker request failed")
+        state._set_module_health("policy_worker", "offline")  # type: ignore[attr-defined]
         return None
     return final_event
 
@@ -123,7 +131,25 @@ async def _invoke_tts(
 
 app = FastAPI(title="Kitsu Orchestrator", version="0.2.0")
 
-_events_telemetry = (
+_DEFAULT_DEV_ORIGINS = {
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:5174",
+    "http://localhost:5174",
+}
+
+allowed_origins = set(orchestrator_cfg.cors_allow_origins or [])
+allowed_origins.update(_DEFAULT_DEV_ORIGINS)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(allowed_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_events_telemetry_client = (
     TelemetryClient(
         orchestrator_cfg.telemetry_url,
         api_key=orchestrator_cfg.telemetry_api_key,
@@ -133,7 +159,9 @@ _events_telemetry = (
     else None
 )
 
-broker = EventBroker(_events_telemetry)
+telemetry = TelemetryDispatcher(_events_telemetry_client)
+
+broker = EventBroker(telemetry)
 
 memory_controller = MemoryController(
     buffer_size=memory_cfg.buffer_size,
@@ -187,6 +215,7 @@ async def on_startup() -> None:
             base_url=TTS_API_URL,
             timeout=httpx.Timeout(TTS_TIMEOUT_SECONDS),
         )
+    await telemetry.startup()
     await state.startup(memory_cfg.restore_context, memory_cfg.restore_window_seconds)
     state.start_background_tasks()
     await gpu_monitor.start()
@@ -197,8 +226,7 @@ async def on_shutdown() -> None:
     global _policy_client, _tts_client
     await state.shutdown()
     await gpu_monitor.stop()
-    if _events_telemetry is not None:
-        await _events_telemetry.aclose()
+    await telemetry.shutdown()
     if _policy_client is not None:
         await _policy_client.aclose()
         _policy_client = None

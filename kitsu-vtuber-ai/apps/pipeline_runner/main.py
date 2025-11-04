@@ -58,7 +58,9 @@ async def _pipe_stream(
             line = await stream.readline()
             if not line:
                 break
-            logger.log(level, "[%s] %s", service, line.decode(errors="replace").rstrip())
+            logger.log(
+                level, "[%s] %s", service, line.decode(errors="replace").rstrip()
+            )
     except asyncio.CancelledError:  # pragma: no cover - shutdown path
         pass
 
@@ -146,8 +148,12 @@ async def _run_service(
             logger.error("Unable to start %s: %s", spec.name, exc)
             return
 
-        stdout_task = asyncio.create_task(_pipe_stream(spec.name, process.stdout, logging.INFO))
-        stderr_task = asyncio.create_task(_pipe_stream(spec.name, process.stderr, logging.ERROR))
+        stdout_task = asyncio.create_task(
+            _pipe_stream(spec.name, process.stdout, logging.INFO)
+        )
+        stderr_task = asyncio.create_task(
+            _pipe_stream(spec.name, process.stderr, logging.ERROR)
+        )
         health_task = None
         if spec.health_check is not None:
             health_task = asyncio.create_task(
@@ -200,11 +206,11 @@ async def _run_service(
         await asyncio.sleep(spec.restart_delay)
 
     # cancel the pipe readers if still running
-    for task in (stdout_task, stderr_task):
-        if task is not None and not task.done():
-            task.cancel()
+    for stream_task in (stdout_task, stderr_task):
+        if stream_task is not None and not stream_task.done():
+            stream_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                await stream_task
 
 
 def _disabled_services() -> set[str]:
@@ -385,7 +391,9 @@ def _service_specs(python: str) -> Iterable[ServiceSpec]:
             ServiceSpec(
                 name="twitch_ingest",
                 command=[python, "-m", "apps.twitch_ingest.main"],
-                predicate=lambda: _require_env(["TWITCH_OAUTH_TOKEN", "TWITCH_CHANNEL"]),
+                predicate=lambda: _require_env(
+                    ["TWITCH_OAUTH_TOKEN", "TWITCH_CHANNEL"]
+                ),
             ),
         ]
     )
@@ -419,17 +427,24 @@ async def run_pipeline() -> None:
         # In some embedded contexts signal handlers cannot be registered.
         pass
 
-    specs = [spec for spec in _service_specs(python) if spec.name.lower() not in disabled]
+    specs = [
+        spec for spec in _service_specs(python) if spec.name.lower() not in disabled
+    ]
     if not specs:
         logger.warning("No services selected; exiting.")
         return
 
     tasks = [
-        asyncio.create_task(_run_service(spec, base_env, stop_event), name=f"svc:{spec.name}")
+        asyncio.create_task(
+            _run_service(spec, base_env, stop_event), name=f"svc:{spec.name}"
+        )
         for spec in specs
     ]
 
-    logger.info("Pipeline runner started with services: %s", ", ".join(spec.name for spec in specs))
+    logger.info(
+        "Pipeline runner started with services: %s",
+        ", ".join(spec.name for spec in specs),
+    )
 
     try:
         results = await asyncio.gather(*tasks, return_exceptions=True)

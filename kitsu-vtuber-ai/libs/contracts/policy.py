@@ -29,9 +29,7 @@ class PolicyRequestPayload(BaseModel):
 
     @field_validator("recent_turns")
     @classmethod
-    def _validate_turns(
-        cls, value: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
+    def _validate_turns(cls, value: List[Dict[str, str]]) -> List[Dict[str, str]]:
         validated: List[Dict[str, str]] = []
         for item in value:
             if "role" not in item or "content" not in item:

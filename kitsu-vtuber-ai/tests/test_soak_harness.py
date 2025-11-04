@@ -49,9 +49,24 @@ def test_soak_harness_collects_summary() -> None:
                         "family_mode": True,
                     },
                     "modules": {
-                        "asr_worker": {"state": "online", "latency_ms": 10.0},
-                        "policy_worker": {"state": "online", "latency_ms": 20.0},
-                        "tts_worker": {"state": "online", "latency_ms": 30.0},
+                        "asr_worker": {
+                            "state": "online",
+                            "enabled": True,
+                            "latency_ms": 10.0,
+                            "last_updated": time.time(),
+                        },
+                        "policy_worker": {
+                            "state": "online",
+                            "enabled": True,
+                            "latency_ms": 20.0,
+                            "last_updated": time.time(),
+                        },
+                        "tts_worker": {
+                            "state": "online",
+                            "enabled": True,
+                            "latency_ms": 30.0,
+                            "last_updated": time.time(),
+                        },
                     },
                 },
             )

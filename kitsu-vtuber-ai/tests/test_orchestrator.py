@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import textwrap
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import pytest
 
@@ -12,14 +12,18 @@ from libs.config import reload_app_config
 
 pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
 from fastapi.testclient import TestClient
-try:  # pragma: no cover - prefer real dependency when available
-    from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - fallback for minimal test envs
-    from libs.compat.tenacity_shim import (
-        AsyncRetrying,
-        stop_after_attempt,
-        wait_fixed,
-    )
+
+if TYPE_CHECKING:
+    from libs.compat.tenacity_shim import AsyncRetrying, stop_after_attempt, wait_fixed
+else:  # pragma: no cover - prefer real dependency when available
+    try:
+        from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed
+    except (ImportError, ModuleNotFoundError):
+        from libs.compat.tenacity_shim import (
+            AsyncRetrying,
+            stop_after_attempt,
+            wait_fixed,
+        )
 
 
 def load_orchestrator(
@@ -89,6 +93,7 @@ def test_toggle_and_ingest_chat(
         payload = result.json()
         assert payload["module"] == "tts_worker"
         assert payload["enabled"] is False
+        assert payload["state"] == "offline"
 
         ingest = client.post(
             "/ingest/chat", json={"role": "user", "text": "Hello there!"}
@@ -98,12 +103,11 @@ def test_toggle_and_ingest_chat(
 
         refreshed = client.get("/status").json()
         assert refreshed["modules"]["tts_worker"]["state"] == "offline"
+        assert refreshed["modules"]["tts_worker"]["enabled"] is False
         assert refreshed["control"]["tts_muted"] is True
 
 
-def test_chat_webui_endpoints(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_chat_webui_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     module = load_orchestrator(monkeypatch, tmp_path)
 
     async def _fake_pipeline(self, text: str, *, synthesize: bool = True):
@@ -130,9 +134,7 @@ def test_chat_webui_endpoints(
         assert overlay.status_code == 200
         assert "<!DOCTYPE html>" in overlay.text
 
-        result = client.post(
-            "/chat/respond", json={"text": "ping", "play_tts": False}
-        )
+        result = client.post("/chat/respond", json={"text": "ping", "play_tts": False})
         assert result.status_code == 200
         payload = result.json()
         assert payload["status"] == "ok"
@@ -246,7 +248,9 @@ def test_chat_pipeline_hits_policy_and_tts(
 ) -> None:
     module = load_orchestrator(monkeypatch, tmp_path)
 
-    async def fake_invoke_policy(payload: dict[str, Any], broker: Any) -> dict[str, Any]:
+    async def fake_invoke_policy(
+        payload: dict[str, Any], broker: Any
+    ) -> dict[str, Any]:
         await broker.publish({"type": "policy.token", "payload": {"token": "Hello"}})
         return {
             "content": "<speech>Hello chat!</speech>",
@@ -254,7 +258,9 @@ def test_chat_pipeline_hits_policy_and_tts(
             "meta": {"voice": "kitsune"},
         }
 
-    async def fake_invoke_tts(text: str, voice: Optional[str], request_id: Optional[str]):
+    async def fake_invoke_tts(
+        text: str, voice: Optional[str], request_id: Optional[str]
+    ):
         return {
             "audio_path": "artifacts/req-123.wav",
             "voice": voice or "kitsune",
@@ -316,7 +322,9 @@ def test_chat_respond_handles_missing_tts(
             "meta": {},
         }
 
-    async def missing_tts(text: str, voice: Optional[str], request_id: Optional[str]) -> None:
+    async def missing_tts(
+        text: str, voice: Optional[str], request_id: Optional[str]
+    ) -> None:
         return None
 
     monkeypatch.setattr(module, "_invoke_policy", fake_policy)

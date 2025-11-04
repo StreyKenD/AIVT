@@ -8,7 +8,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from libs.common import configure_json_logging
-from libs.config import get_app_config
+from libs.config import LocalLLMSettings, OpenAISettings, get_app_config
 from libs.contracts import PolicyRequestPayload
 from libs.safety import ModerationPipeline
 from libs.telemetry import TelemetryClient
@@ -27,6 +27,7 @@ logger = logging.getLogger("kitsu.policy")
 settings = get_app_config()
 policy_cfg = settings.policy
 orchestrator_cfg = settings.orchestrator
+
 
 def _resolve_model_name() -> str:
     backend = policy_cfg.backend
@@ -256,6 +257,8 @@ class BaseLLMClient:
         family_mode: bool,
         attempt: int,
     ) -> AsyncIterator[str]:
+        if False:  # pragma: no cover
+            yield ""  # ensure subclasses return an async iterator for type checkers
         raise NotImplementedError
 
 
@@ -264,7 +267,7 @@ class OllamaLLMClient(BaseLLMClient):
 
     def __init__(self, base_url: str, model_name: str) -> None:
         super().__init__(model_name)
-        self._base_url = base_url.rstrip('/')
+        self._base_url = base_url.rstrip("/")
 
     async def stream_response(
         self,
@@ -281,7 +284,9 @@ class OllamaLLMClient(BaseLLMClient):
         final_metadata: Dict[str, Any] = {}
 
         try:
-            async with httpx.AsyncClient(base_url=self._base_url, timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=timeout
+            ) as client:
                 async with client.stream(
                     "POST",
                     "/api/chat",
@@ -302,7 +307,9 @@ class OllamaLLMClient(BaseLLMClient):
                         try:
                             chunk = json.loads(line)
                         except json.JSONDecodeError:
-                            logger.debug("Discarding non-JSON chunk from Ollama: %s", line)
+                            logger.debug(
+                                "Discarding non-JSON chunk from Ollama: %s", line
+                            )
                             continue
                         if "error" in chunk:
                             raise LLMStreamError(chunk["error"])
@@ -326,8 +333,8 @@ class OllamaLLMClient(BaseLLMClient):
             body_preview = await _response_preview(exc.response)
             if "model not found" in body_preview.lower():
                 body_preview = (
-                    f"{body_preview}. Install the model with ollama pull {self.model_name} " +
-                    "or update LLM_MODEL_NAME."
+                    f"{body_preview}. Install the model with ollama pull {self.model_name} "
+                    + "or update LLM_MODEL_NAME."
                 )
             raise LLMStreamError(
                 f"Ollama HTTP {exc.response.status_code}: {body_preview}"
@@ -338,7 +345,7 @@ class OllamaLLMClient(BaseLLMClient):
         if not aggregated_tokens:
             raise LLMStreamError("No tokens returned from Ollama")
 
-        content = ''.join(aggregated_tokens).strip()
+        content = "".join(aggregated_tokens).strip()
         if not all(tag in content for tag in ("<speech>", "<mood>", "<actions>")):
             raise LLMStreamError("Invalid XML payload from Ollama")
 
@@ -379,7 +386,7 @@ class OpenAILLMClient(BaseLLMClient):
     def __init__(self, config: OpenAISettings, model_name: str) -> None:
         super().__init__(model_name)
         self._config = config
-        self._base_url = config.base_url.rstrip('/')
+        self._base_url = config.base_url.rstrip("/")
 
     def _resolve_headers(self) -> Dict[str, str]:
         api_key_env = self._config.api_key_env or "OPENAI_API_KEY"
@@ -415,7 +422,9 @@ class OpenAILLMClient(BaseLLMClient):
         }
 
         try:
-            async with httpx.AsyncClient(base_url=self._base_url, timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=timeout
+            ) as client:
                 async with client.stream(
                     "POST",
                     "/chat/completions",
@@ -435,7 +444,9 @@ class OpenAILLMClient(BaseLLMClient):
                         try:
                             chunk = json.loads(data)
                         except json.JSONDecodeError:
-                            logger.debug("Discarding non-JSON chunk from OpenAI: %s", data)
+                            logger.debug(
+                                "Discarding non-JSON chunk from OpenAI: %s", data
+                            )
                             continue
                         choices = chunk.get("choices") or []
                         if not choices:
@@ -466,7 +477,7 @@ class OpenAILLMClient(BaseLLMClient):
         if not aggregated_tokens:
             raise LLMStreamError("No tokens returned from OpenAI")
 
-        content = ''.join(aggregated_tokens).strip()
+        content = "".join(aggregated_tokens).strip()
         latency_ms = (time.perf_counter() - start_time) * 1000
         stats: Dict[str, Any] = {}
         if finish_reason:
@@ -529,7 +540,9 @@ class LocalTransformersClient(BaseLLMClient):
                 try:
                     pipeline_kwargs["device"] = int(device)
                 except ValueError as exc:  # pragma: no cover - defensive guard
-                    raise LLMStreamError(f"Unsupported local device setting: {self._config.device}") from exc
+                    raise LLMStreamError(
+                        f"Unsupported local device setting: {self._config.device}"
+                    ) from exc
         try:
             self._pipeline = transformers.pipeline(
                 "text-generation",
@@ -588,11 +601,7 @@ class LocalTransformersClient(BaseLLMClient):
         if not outputs:
             raise LLMStreamError("Local model produced no output")
         generated = outputs[0]
-        text = (
-            generated.get("generated_text")
-            or generated.get("text")
-            or ""
-        ).strip()
+        text = (generated.get("generated_text") or generated.get("text") or "").strip()
         if not text:
             raise LLMStreamError("Local model returned empty response")
         yield _format_sse(
@@ -710,7 +719,9 @@ async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator
     for attempt in range(attempts_allowed + 1):
         try:
             attempts_made = attempt
-            async for chunk in LLM_CLIENT.stream_response(payload, request_id, start, persona, family_mode, attempt):
+            async for chunk in LLM_CLIENT.stream_response(
+                payload, request_id, start, persona, family_mode, attempt
+            ):
                 event, data = _parse_sse(chunk)
                 if (
                     event == "token"
@@ -734,7 +745,7 @@ async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator
                         data["content"] = _wrap_safe_xml(guard.sanitized_text)
                         response_moderation = {
                             "phase": "response",
-                            "reason": guard.reason,
+                            "reason": guard.reason or "sanitized",
                         }
                         data.setdefault("meta", {})["moderation"] = response_moderation
                         chunk = _format_sse("final", data)
@@ -843,7 +854,3 @@ if __name__ == "__main__":
         port=policy_cfg.bind_port,
         reload=os.getenv("UVICORN_RELOAD") == "1",
     )
-
-
-
-

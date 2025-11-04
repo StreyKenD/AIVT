@@ -17,6 +17,10 @@ class PersonaUpdateCommand(BaseModel):
     preset: Optional[str] = Field(
         None, description="Optional persona preset identifier to apply."
     )
+    system_message: Optional[str] = Field(
+        None,
+        description="Optional system turn to append when applying the update.",
+    )
 
 
 class ModuleToggleCommand(BaseModel):

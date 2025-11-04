@@ -73,8 +73,7 @@ class SimpleASRPipeline:
         self._silence_required = max(
             1,
             int(
-                (silence_ms + config.frame_duration_ms - 1)
-                // config.frame_duration_ms
+                (silence_ms + config.frame_duration_ms - 1) // config.frame_duration_ms
             ),
         )
         if allow_non_english is None:
@@ -259,7 +258,9 @@ class SimpleASRPipeline:
         except Exception:  # pragma: no cover - telemetry guard
             logger.debug("Telemetry segment_skipped failed", exc_info=True)
 
-    async def _transcribe_async(self, audio: bytes) -> tuple[str, Optional[float], Optional[str]]:
+    async def _transcribe_async(
+        self, audio: bytes
+    ) -> tuple[str, Optional[float], Optional[str]]:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._transcriber.transcribe, audio)
         return result.text, result.confidence, result.language
@@ -278,7 +279,9 @@ class SimpleASRPipeline:
         try:
             await self._orchestrator.publish(event)
         except Exception:  # pragma: no cover - network guard
-            logger.warning("Failed to publish %s to orchestrator", event.type, exc_info=True)
+            logger.warning(
+                "Failed to publish %s to orchestrator", event.type, exc_info=True
+            )
 
     async def _emit_telemetry_partial(
         self,
@@ -329,7 +332,9 @@ class SimpleASRPipeline:
             try:
                 return not bool(self._vad.is_speech(frame))
             except Exception:  # pragma: no cover - defensive guard
-                logger.debug("VAD check failed; falling back to energy threshold", exc_info=True)
+                logger.debug(
+                    "VAD check failed; falling back to energy threshold", exc_info=True
+                )
         if not frame:
             return True
         mv = memoryview(frame).cast("h")

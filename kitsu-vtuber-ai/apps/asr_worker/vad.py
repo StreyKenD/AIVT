@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Protocol, cast
 
 from .config import ASRConfig
-from .logger import logger
 from .utils import load_module_if_available
 
 
@@ -13,13 +12,11 @@ class VoiceActivityDetector(Protocol):
 
 
 class WebRtcVadLike(Protocol):
-    def is_speech(self, frame: bytes, sample_rate: int) -> bool:
-        ...
+    def is_speech(self, frame: bytes, sample_rate: int) -> bool: ...
 
 
 class WebRtcVadModule(Protocol):
-    def Vad(self, aggressiveness: int) -> WebRtcVadLike:
-        ...
+    def Vad(self, aggressiveness: int) -> WebRtcVadLike: ...
 
 
 class PassthroughVAD:
@@ -65,4 +62,3 @@ __all__ = [
     "WebRtcVAD",
     "build_vad",
 ]
-

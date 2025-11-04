@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, AsyncIterator, Dict, Generator, List
 
 import pytest
@@ -17,10 +18,18 @@ class StubGateway:
 
     async def orchestrator_get(self, path: str) -> Dict[str, Any]:
         self.orchestrator_calls.append((f"GET {path}", {}))
+        now = time.time()
         return {
             "status": "ok",
             "persona": {"style": "kawaii"},
-            "modules": {},
+            "modules": {
+                "policy_worker": {
+                    "state": "online",
+                    "enabled": True,
+                    "latency_ms": 42.0,
+                    "last_updated": now,
+                }
+            },
             "control": {
                 "tts_muted": False,
                 "panic_at": None,
@@ -67,8 +76,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
     async def _override_gateway() -> StubGateway:
         return gateway
 
+    async def _override_supervisor() -> None:
+        return None
+
     app = control_backend.app
     app.dependency_overrides[control_backend.get_gateway] = _override_gateway
+    app.dependency_overrides[control_backend.get_supervisor] = _override_supervisor
     test_client = TestClient(app)
     test_client.gateway = gateway  # type: ignore[attr-defined]
     yield test_client
@@ -81,6 +94,8 @@ def test_status_and_metrics(client: TestClient) -> None:
     payload = response.json()
     assert payload["status"]["status"] == "ok"
     assert payload["metrics"]["window_seconds"] == 300
+    assert payload["ollama"]["backend"] == "ollama"
+    assert payload["ollama"]["status"] in {"unmanaged", "unknown", "offline", "online"}
 
 
 def test_control_actions_forward_to_orchestrator(client: TestClient) -> None:

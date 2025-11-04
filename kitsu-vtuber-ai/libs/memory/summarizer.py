@@ -58,9 +58,7 @@ class Summarizer:
         energy = min(1.0, 0.35 + chaos_ratio)
 
         user_turns: List[MemoryTurn] = [t for t in window if t.role == "user"]
-        assistant_turns: List[MemoryTurn] = [
-            t for t in window if t.role == "assistant"
-        ]
+        assistant_turns: List[MemoryTurn] = [t for t in window if t.role == "assistant"]
 
         highlights: List[str] = []
         if user_turns:
@@ -78,10 +76,7 @@ class Summarizer:
             " ".join(turn.text for turn in window).lower(),
         )
         filtered_words = [word for word in words if word not in _STOP_WORDS]
-        topics = [
-            word
-            for word, _ in Counter(filtered_words).most_common(4)
-        ]
+        topics = [word for word, _ in Counter(filtered_words).most_common(4)]
 
         if not highlights:
             highlights.append("Conversation is warming up.")

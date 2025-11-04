@@ -73,10 +73,10 @@ def test_piper_synthesizer_respects_optional_config(
         captured["cmd"] = tuple(cmd)
         return _Proc()
 
-    monkeypatch_target = "asyncio.create_subprocess_exec"
     original_exec = getattr(asyncio, "create_subprocess_exec")
     setattr(asyncio, "create_subprocess_exec", _fake_exec)
     try:
+
         async def _invoke() -> None:
             await synth.synthesize("hello", None, destination=Path("/tmp/output.wav"))
 

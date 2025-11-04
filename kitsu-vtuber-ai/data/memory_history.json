@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "role": "user",
+      "text": "ping",
+      "ts": 1762215183.38059
+    },
+    {
+      "role": "assistant",
+      "text": "Hello!",
+      "ts": 1762215183.3815887
+    }
+  ]
+}

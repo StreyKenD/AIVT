@@ -65,11 +65,17 @@ class TelemetryClient:
         final_source = source or self._source
         if final_source:
             data["source"] = final_source
+        request_kwargs: Dict[str, Any] = {"json": data}
+        if headers:
+            request_kwargs["headers"] = headers
         try:
-            response = await client.post("/events", json=data, headers=headers)
+            response = await client.post("/events", **request_kwargs)
             response.raise_for_status()
         except Exception as exc:  # pragma: no cover - network noise
-            logger.debug("Failed to send telemetry %s: %s", event_type, exc)
+            logger.debug(
+                "Failed to send telemetry %s: %s", event_type, exc, exc_info=True
+            )
+            raise
 
     async def aclose(self) -> None:
         if self._client is None:

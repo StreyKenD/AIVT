@@ -24,11 +24,15 @@ class TTSResponsePayload(BaseModel):
 
     audio_path: str = Field(..., description="Filesystem path to the generated audio.")
     voice: str = Field(..., description="Voice used by the synthesiser.")
-    latency_ms: float = Field(..., ge=0.0, description="Observed latency in milliseconds.")
+    latency_ms: float = Field(
+        ..., ge=0.0, description="Observed latency in milliseconds."
+    )
     visemes: List[Dict[str, float]] = Field(
         default_factory=list, description="Viseme timings accompanying the audio."
     )
-    cached: bool = Field(..., description="Indicates whether the response came from cache.")
+    cached: bool = Field(
+        ..., description="Indicates whether the response came from cache."
+    )
 
 
 __all__ = ["TTSRequestPayload", "TTSResponsePayload"]

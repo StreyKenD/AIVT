@@ -46,7 +46,9 @@ def test_build_transcriber_sherpa_backend(monkeypatch: pytest.MonkeyPatch) -> No
         def __init__(self) -> None:
             self._text = ""
 
-        def accept_waveform(self, sample_rate: int, samples: np.ndarray) -> None:  # pragma: no cover - stub
+        def accept_waveform(
+            self, sample_rate: int, samples: np.ndarray
+        ) -> None:  # pragma: no cover - stub
             return None
 
         @property
@@ -156,7 +158,11 @@ def test_speech_pipeline_emits_partial_and_final(
             compute_type=None,
         )
 
-        telemetry_calls: dict[str, list[dict]] = {"partial": [], "final": [], "skipped": []}
+        telemetry_calls: dict[str, list[dict]] = {
+            "partial": [],
+            "final": [],
+            "skipped": [],
+        }
 
         class _TelemetryStub:
             async def segment_partial(
@@ -331,7 +337,11 @@ def test_speech_pipeline_skips_non_english_segments(
             compute_type=None,
         )
 
-        telemetry_calls: dict[str, list[dict]] = {"partial": [], "final": [], "skipped": []}
+        telemetry_calls: dict[str, list[dict]] = {
+            "partial": [],
+            "final": [],
+            "skipped": [],
+        }
 
         class _TelemetryStub:
             async def segment_partial(self, **_kwargs) -> None:
@@ -375,7 +385,9 @@ def test_speech_pipeline_skips_non_english_segments(
 
         await pipeline.process(_frames())
 
-        assert not orchestrator.events, "Non-English segments should not reach orchestrator"
+        assert (
+            not orchestrator.events
+        ), "Non-English segments should not reach orchestrator"
         assert not telemetry_calls["partial"]
         assert not telemetry_calls["final"]
         assert telemetry_calls["skipped"]
@@ -453,7 +465,9 @@ def test_gather_devices_handles_missing_modules(
     assert entries == []
 
 
-def test_load_config_converts_numeric_input_device(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_config_converts_numeric_input_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASR_INPUT_DEVICE", "32")
     config = load_config()
     assert config.input_device == 32
@@ -465,7 +479,9 @@ def test_load_config_keeps_named_input_device(monkeypatch: pytest.MonkeyPatch) -
     assert config.input_device == "USB Microphone"
 
 
-def test_load_config_recovers_from_invalid_numeric_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_config_recovers_from_invalid_numeric_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASR_SAMPLE_RATE", "not-a-number")
     monkeypatch.setenv("ASR_FRAME_MS", "abc")
     config = load_config()
@@ -499,7 +515,9 @@ def test_load_config_strips_compute_type(monkeypatch: pytest.MonkeyPatch) -> Non
     assert config.compute_type is None
 
 
-def test_load_energy_threshold_handles_non_finite(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_energy_threshold_handles_non_finite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from apps.asr_worker.pipeline import _load_energy_threshold
 
     monkeypatch.setenv("ASR_ENERGY_THRESHOLD", "nan")
@@ -549,12 +567,8 @@ def test_run_worker_retries_after_pipeline_cancellation(
             async def aclose(self) -> None:
                 return None
 
-            async def cycle_started(
-                self, attempt: int, backoff_seconds: float
-            ) -> None:
-                telemetry_records["started"].append(
-                    (attempt, f"{backoff_seconds:.1f}")
-                )
+            async def cycle_started(self, attempt: int, backoff_seconds: float) -> None:
+                telemetry_records["started"].append((attempt, f"{backoff_seconds:.1f}"))
 
             async def cycle_completed(
                 self, attempt: int, outcome: str, *, detail: str | None = None
@@ -596,9 +610,12 @@ def test_run_worker_retries_after_pipeline_cancellation(
                 transcriber: object,
                 orchestrator: object,
                 telemetry: object,
+                allow_non_english: bool | None = None,
+                **_: object,
             ) -> None:
                 self._config = config
                 self._orchestrator = orchestrator
+                self._allow_non_english = allow_non_english
 
             async def process(self, frames) -> None:
                 nonlocal attempts

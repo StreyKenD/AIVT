@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict
+from typing import Any, Dict
 
 import httpx
 import pytest
@@ -11,7 +11,7 @@ from libs.telemetry import TelemetryClient
 
 @pytest.mark.asyncio()
 async def test_telemetry_client_uses_expected_headers_and_source() -> None:
-    captured: Dict[str, object] = {}
+    captured: Dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["headers"] = {k.lower(): v for k, v in request.headers.items()}
@@ -44,7 +44,7 @@ async def test_telemetry_client_uses_expected_headers_and_source() -> None:
 
 @pytest.mark.asyncio()
 async def test_publish_event_propagates_api_key_and_source() -> None:
-    captured: Dict[str, object] = {}
+    captured: Dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["headers"] = {k.lower(): v for k, v in request.headers.items()}
@@ -74,4 +74,3 @@ async def test_publish_event_propagates_api_key_and_source() -> None:
     assert body["payload"] == {"state": "ok"}
     assert body["source"] == "orchestrator"
     assert isinstance(body["ts"], (int, float))
-

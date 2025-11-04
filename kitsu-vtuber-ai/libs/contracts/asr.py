@@ -23,8 +23,12 @@ class _ASREventBase(BaseModel):
         min_length=1,
         description="ISO language code detected by the recogniser.",
     )
-    started_at: float = Field(..., ge=0.0, description="Unix timestamp when speech started.")
-    ended_at: float = Field(..., ge=0.0, description="Unix timestamp when speech ended.")
+    started_at: float = Field(
+        ..., ge=0.0, description="Unix timestamp when speech started."
+    )
+    ended_at: float = Field(
+        ..., ge=0.0, description="Unix timestamp when speech ended."
+    )
     latency_ms: Optional[float] = Field(
         None,
         ge=0.0,

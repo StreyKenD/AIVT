@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Tuple
@@ -10,6 +11,7 @@ import yaml
 from .models import AppSettings
 
 
+logger = logging.getLogger(__name__)
 _CONFIG_CACHE: AppSettings | None = None
 
 
@@ -63,7 +65,11 @@ def _apply_env_overrides(source: Dict[str, Any]) -> Dict[str, Any]:
         if raw_value is None or raw_value == "":
             continue
         for path, transformer in overrides:
-            value = transformer(raw_value) if transformer else raw_value
+            try:
+                value = transformer(raw_value) if transformer else raw_value
+            except Exception as exc:
+                logger.warning("Ignoring invalid value for %s: %s", env_name, exc)
+                continue
             _assign_path(result, path, value)
     return result
 
@@ -106,14 +112,35 @@ def _to_mapping(value: str) -> Dict[str, str]:
     return mapping
 
 
-def _map(path: Tuple[str, ...], transformer: Callable[[str], Any] | None = None) -> Tuple[Tuple[str, ...], Callable[[str], Any] | None]:
+def _to_int_clamped(min_value: int, max_value: int) -> Callable[[str], int]:
+    def transformer(value: str) -> int:
+        candidate = int(value.strip())
+        if candidate < min_value:
+            return min_value
+        if candidate > max_value:
+            return max_value
+        return candidate
+
+    return transformer
+
+
+def _strip_or_none(value: str) -> str | None:
+    stripped = value.strip()
+    return stripped or None
+
+
+def _map(
+    path: Tuple[str, ...], transformer: Callable[[str], Any] | None = None
+) -> Tuple[Tuple[str, ...], Callable[[str], Any] | None]:
     return path, transformer
 
 
 _ENV_MAPPING: Dict[str, list[Tuple[Tuple[str, ...], Callable[[str], Any] | None]]] = {}
 
 
-def _register(env: str, *paths: Tuple[Tuple[str, ...], Callable[[str], Any] | None]) -> None:
+def _register(
+    env: str, *paths: Tuple[Tuple[str, ...], Callable[[str], Any] | None]
+) -> None:
     bucket = _ENV_MAPPING.setdefault(env, [])
     bucket.extend(paths)
 
@@ -372,19 +399,19 @@ _register(
 )
 _register(
     "ASR_SAMPLE_RATE",
-    _map(("asr", "sample_rate")),
+    _map(("asr", "sample_rate"), _to_int),
 )
 _register(
     "ASR_FRAME_MS",
-    _map(("asr", "frame_duration_ms")),
+    _map(("asr", "frame_duration_ms"), _to_int),
 )
 _register(
     "ASR_PARTIAL_INTERVAL_MS",
-    _map(("asr", "partial_interval_ms")),
+    _map(("asr", "partial_interval_ms"), _to_int),
 )
 _register(
     "ASR_SILENCE_MS",
-    _map(("asr", "silence_duration_ms")),
+    _map(("asr", "silence_duration_ms"), _to_int),
 )
 _register(
     "ASR_VAD",
@@ -392,7 +419,7 @@ _register(
 )
 _register(
     "ASR_VAD_AGGRESSIVENESS",
-    _map(("asr", "vad_aggressiveness")),
+    _map(("asr", "vad_aggressiveness"), _to_int_clamped(0, 3)),
 )
 _register(
     "ASR_INPUT_DEVICE",
@@ -408,7 +435,7 @@ _register(
 )
 _register(
     "ASR_COMPUTE_TYPE",
-    _map(("asr", "compute_type")),
+    _map(("asr", "compute_type"), _strip_or_none),
 )
 _register(
     "ASR_ALLOW_NON_ENGLISH",

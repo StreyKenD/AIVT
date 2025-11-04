@@ -2,8 +2,8 @@
 
 This workspace contains two tightly coupled projects:
 
-- **`kitsu-vtuber-ai/`** – the AI control-plane and runtime workers (ASR, policy, TTS, OBS/VTS/Twitch bridges).
-- **`kitsu-telemetry/`** – the telemetry API and dashboard.
+- **`kitsu-vtuber-ai/`** - the AI control-plane and runtime workers (ASR, policy, TTS, OBS/VTS/Twitch bridges).
+- **`kitsu-telemetry/`** - the telemetry API and dashboard.
 
 The instructions below reflect the current tooling, including the unified pipeline runner.
 
@@ -14,7 +14,7 @@ The instructions below reflect the current tooling, including the unified pipeli
 | Component | Purpose | Suggested install |
 | --- | --- | --- |
 | Python 3.11 + [Poetry](https://python-poetry.org/docs/) | Worker runtime & dependency management | `pipx install poetry` |
-| Node.js 18 + [pnpm](https://pnpm.io/) | *Optional – telemetry UI* | `npm install -g pnpm` |
+| Node.js 18 + [pnpm](https://pnpm.io/) | *Optional - telemetry UI* | `npm install -g pnpm` |
 | OBS Studio (WebSocket v5) | Scenes + panic macros | Download from obsproject.com |
 | VTube Studio (optional) | Avatar control | Steam or official site |
 | `ffmpeg`, `portaudio`, `libsndfile` | Audio capture / playback | `brew install` / `apt install` / `choco install` |
@@ -31,7 +31,7 @@ git clone https://github.com/<your-org>/AIVT.git
 cd AIVT
 
 cp kitsu-vtuber-ai/.env.example kitsu-vtuber-ai/.env
-# Optional — telemetry pieces
+# Optional - telemetry pieces
 cp kitsu-telemetry/.env.example kitsu-telemetry/.env
 cp kitsu-telemetry/ui/.env.example kitsu-telemetry/ui/.env.local
 
@@ -97,7 +97,7 @@ poetry run python -m apps.pipeline_runner.main
 | Variable | Effect |
 | --- | --- |
 | `PIPELINE_DISABLE=twitch_ingest,avatar_controller` | Skip specific services |
-| `ASR_INPUT_DEVICE=32` | Pick the PortAudio device index detected by the listing command |
+| `ASR_INPUT_DEVICE=<device id>` | Pick the PortAudio device index detected by the listing command |
 | `ASR_FAKE_AUDIO=1` | Force silent (fake) audio (default is `0`) |
 | `ASR_ALLOW_NON_ENGLISH=1` | Allow transcripts in any detected language (default keeps English-only filtering) |
 | `TTS_BACKEND=xtts` / `TTS_FALLBACKS=piper` | Switch TTS synthesizers on the fly without editing the YAML |
@@ -150,7 +150,7 @@ These checks validate config/env merging, pipeline supervision, the chat-to-TTS 
 ```bash
 # API
 cd kitsu-telemetry
-poetry run uvicorn api.main:app --reload --host ${API_HOST:-127.0.0.1} --port ${API_PORT:-8001}
+powershell.exe -NoProfile -Command 'poetry run uvicorn api.main:app --reload --host 127.0.0.1 --port 8001'
 
 # UI
 cd ui
@@ -166,7 +166,8 @@ Set `PUBLIC_ORCH_BASE_URL`, `PUBLIC_ORCH_WS_URL`, and `PUBLIC_CONTROL_BASE_URL` 
 | Symptom | Fix |
 | --- | --- |
 | `port already in use` on orchestrator/control/policy | Stop old processes (`scripts/run_pipeline.ps1 stop`) or change the ports in `.env` |
-| TTS warning: “No espeak backend found” | Install `espeak-ng` (or keep running in synthetic mode) |
+| `'No espeak backend found'` warning from TTS | Install `espeak-ng` (or keep running in synthetic mode) |
+| `forrtl: error (200): program aborting due to window-CLOSE event` on Windows | Set `ASR_FAKE_AUDIO=1` or disable the ASR worker via `PIPELINE_DISABLE=asr_worker` when a real microphone is unavailable, then retry |
 | ASR keeps using silence | Set `ASR_FAKE_AUDIO=0` and `ASR_INPUT_DEVICE=<numeric id>`; confirm in logs that `sounddevice` is in use |
 | OBS/VTS/Twitch skipped | Add the required env vars or list the services in `PIPELINE_DISABLE` |
 | GPU metrics disabled | Install NVIDIA drivers or ignore (the runner auto-disables telemetry when unavailable) |
@@ -177,10 +178,10 @@ Set `PUBLIC_ORCH_BASE_URL`, `PUBLIC_ORCH_WS_URL`, and `PUBLIC_CONTROL_BASE_URL` 
 
 ```
 AIVT/
-├── kitsu-vtuber-ai/          # core runtime (this guide)
-├── kitsu-telemetry/          # telemetry API + UI
-├── licenses/                 # third-party notices
-└── README.md (you are here)
++-- kitsu-vtuber-ai/          # core runtime (this guide)
++-- kitsu-telemetry/          # telemetry API + UI
++-- licenses/                 # third-party notices
+`-- README.md (you are here)
 ```
 
 For more details, including licensing requirements and the operations playbook, read `kitsu-vtuber-ai/README.md` and `kitsu-vtuber-ai/RUN_FIRST.md`.

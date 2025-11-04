@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from libs.telemetry import TelemetryClient
+from .telemetry import TelemetryDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class EventBroker:
     """Simple pub/sub broker for broadcasting orchestrator events."""
 
-    def __init__(self, telemetry: Optional[TelemetryClient] = None) -> None:
+    def __init__(self, telemetry: Optional[TelemetryDispatcher] = None) -> None:
         self._subscribers: Dict[int, asyncio.Queue[Dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
         self._counter = 0

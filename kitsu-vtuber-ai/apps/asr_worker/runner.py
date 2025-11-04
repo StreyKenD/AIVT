@@ -91,7 +91,9 @@ async def run(config: ASRConfig | None = None) -> None:
                 await telemetry.cycle_completed(attempt, "cancelled")
             except Exception as exc:
                 logger.exception("ASR worker capture loop failed: %s", exc)
-                await telemetry.cycle_completed(attempt, "error", detail=type(exc).__name__)
+                await telemetry.cycle_completed(
+                    attempt, "error", detail=type(exc).__name__
+                )
 
             await asyncio.sleep(current_backoff)
             backoff = min(current_backoff * 2, 30.0)

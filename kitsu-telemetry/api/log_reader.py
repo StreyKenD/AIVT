@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 
 @dataclass
@@ -26,16 +26,38 @@ class LogReaderError(RuntimeError):
     """Raised when the log reader cannot load data."""
 
 
-def _resolve_log_root() -> Path:
+def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _expand_path(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    try:
+        return path.resolve()
+    except FileNotFoundError:
+        return path
+
+
+def _resolve_log_roots() -> list[Path]:
     env_value = os.getenv("KITSU_LOG_ROOT") or os.getenv("LOG_ROOT")
     if env_value:
-        root = Path(env_value).expanduser()
-    else:
-        root = Path.cwd() / "logs"
-    try:
-        return root.resolve()
-    except FileNotFoundError:
-        return root
+        raw_values = [item.strip() for item in env_value.split(os.pathsep)]
+        roots = [_expand_path(value) for value in raw_values if value]
+        return _dedupe_paths(roots) or [_expand_path(Path.cwd() / "logs")]
+
+    roots: list[Path] = [_expand_path(Path.cwd() / "logs")]
+    sibling = Path.cwd().parent / "kitsu-vtuber-ai" / "logs"
+    if sibling.exists():
+        roots.append(_expand_path(sibling))
+    return _dedupe_paths(roots)
 
 
 def _iter_log_files(log_root: Path, service: str | None) -> Iterator[Path]:
@@ -122,16 +144,30 @@ def query_logs(
     if limit <= 0:
         return []
 
-    log_root = _resolve_log_root()
-    if not log_root.exists():
-        raise LogReaderError(f"Log directory '{log_root}' does not exist")
-
+    log_roots = _resolve_log_roots()
     level_filter = level.lower() if level else None
     text_filter = contains.lower() if contains else None
     entries: list[LogRecord] = []
 
-    files = list(_iter_log_files(log_root, service))
-    for log_file in files:
+    files: list[tuple[Path, Path, float]] = []
+    for index, log_root in enumerate(log_roots):
+        if not log_root.exists():
+            try:
+                if index == 0:
+                    log_root.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise LogReaderError(f"Log directory '{log_root}' does not exist") from exc
+            if not log_root.exists():
+                continue
+        for log_file in _iter_log_files(log_root, service):
+            try:
+                mtime = log_file.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            files.append((log_root, log_file, mtime))
+
+    files.sort(key=lambda item: item[2], reverse=True)
+    for base_path, log_file, _ in files:
         try:
             lines = log_file.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
@@ -143,7 +179,7 @@ def query_logs(
                 line,
                 default_service=default_service,
                 source_file=log_file,
-                base_path=log_root,
+                base_path=base_path,
             )
             if record is None:
                 continue
@@ -169,7 +205,8 @@ def query_logs(
 
             entries.append(record)
             if len(entries) >= limit and order == "desc":
-                return entries
+                entries.sort(key=lambda item: item.ts, reverse=True)
+                return entries[:limit]
 
     entries.sort(key=lambda item: item.ts, reverse=(order.lower() != "asc"))
     return entries[:limit]

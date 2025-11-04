@@ -108,9 +108,7 @@ class TwitchCommandRouter:
         r"^(?P<style>\w+)(\s+(?P<chaos>\d+(?:\.\d+)?))?(\s+(?P<energy>\d+(?:\.\d+)?))?$"
     )
 
-    def __init__(
-        self, bridge: TwitchBridge, cooldown_seconds: float = 3.0
-    ) -> None:
+    def __init__(self, bridge: TwitchBridge, cooldown_seconds: float = 3.0) -> None:
         self._bridge: TwitchBridge = bridge
         self._handlers: Dict[str, CommandHandler] = {}
         self._rate_limiter = RateLimiter(cooldown_seconds)
@@ -215,12 +213,13 @@ async def run() -> None:
 
     class TwitchBot(commands.Bot):  # type: ignore[misc]
         def __init__(self) -> None:
-            super().__init__(
+            super().__init__(  # type: ignore[call-arg]
                 token=twitch_token,
                 prefix="!",
                 initial_channels=[twitch_channel],
                 nick=nick,
             )
+            self.nick = nick
 
         async def event_ready(self) -> None:  # pragma: no cover - twitch runtime
             logger.info("Connected to Twitch as %s", self.nick)

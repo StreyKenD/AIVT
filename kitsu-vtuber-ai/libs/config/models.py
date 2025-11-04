@@ -3,7 +3,14 @@ from __future__ import annotations
 import warnings
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
 def _to_bool(value: Union[str, bool]) -> bool:
@@ -96,9 +103,7 @@ class PersonaSettings(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     default: str = "default"
-    presets: Dict[str, PersonaPreset] = Field(
-        default_factory=_default_persona_presets
-    )
+    presets: Dict[str, PersonaPreset] = Field(default_factory=_default_persona_presets)
     presets_file: Optional[str] = None
 
 
@@ -116,8 +121,8 @@ class PolicySettings(BaseModel):
     retry_backoff: float = Field(1.0, ge=0.0)
     temperature: float = Field(0.65, ge=0.0, le=2.0)
     ollama_url: str = "http://localhost:11434"
-    openai: OpenAISettings = Field(default_factory=OpenAISettings)
-    local: LocalLLMSettings = Field(default_factory=LocalLLMSettings)
+    openai: OpenAISettings = Field(default_factory=lambda: OpenAISettings())
+    local: LocalLLMSettings = Field(default_factory=lambda: LocalLLMSettings())
 
     @computed_field(return_type=str)
     def url(self) -> str:
@@ -180,12 +185,13 @@ class XTTSSettings(BaseModel):
 
     @field_validator("language_overrides", mode="before")
     @classmethod
-    def _normalise_language_overrides(
-        cls, value: Dict[str, str]
-    ) -> Dict[str, str]:
+    def _normalise_language_overrides(cls, value: Dict[str, str]) -> Dict[str, str]:
         if not isinstance(value, dict):
             return value
-        return {key: (val.strip().lower() if isinstance(val, str) else val) for key, val in value.items()}
+        return {
+            key: (val.strip().lower() if isinstance(val, str) else val)
+            for key, val in value.items()
+        }
 
 
 class TTSSettings(BaseModel):
@@ -198,10 +204,10 @@ class TTSSettings(BaseModel):
     cache_dir: str = "artifacts/tts_cache"
     backend: str = "auto"
     fallback_backends: List[str] = Field(default_factory=list)
-    coqui: CoquiTTSSettings = Field(default_factory=CoquiTTSSettings)
-    piper: PiperTTSSettings = Field(default_factory=PiperTTSSettings)
-    bark: BarkTTSSettings = Field(default_factory=BarkTTSSettings)
-    xtts: XTTSSettings = Field(default_factory=XTTSSettings)
+    coqui: CoquiTTSSettings = Field(default_factory=lambda: CoquiTTSSettings())
+    piper: PiperTTSSettings = Field(default_factory=lambda: PiperTTSSettings())
+    bark: BarkTTSSettings = Field(default_factory=lambda: BarkTTSSettings())
+    xtts: XTTSSettings = Field(default_factory=lambda: XTTSSettings())
 
     @computed_field(return_type=str)
     def url(self) -> str:
@@ -256,7 +262,7 @@ class ASRSettings(BaseModel):
     compute_type: Optional[str] = None
     allow_non_english: bool = False
     backend: str = "whisper"
-    sherpa: SherpaSettings = Field(default_factory=SherpaSettings)
+    sherpa: SherpaSettings = Field(default_factory=lambda: SherpaSettings())
 
     @field_validator("vad_mode", mode="before")
     @classmethod
@@ -288,7 +294,9 @@ class ASRSettings(BaseModel):
 
     @field_validator("input_device", mode="before")
     @classmethod
-    def _parse_input_device(cls, value: Union[str, int, None]) -> Optional[Union[int, str]]:
+    def _parse_input_device(
+        cls, value: Union[str, int, None]
+    ) -> Optional[Union[int, str]]:
         if value is None:
             return None
         if isinstance(value, int):
@@ -345,12 +353,14 @@ class AppSettings(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     version: int = 1
-    orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
-    policy: PolicySettings = Field(default_factory=PolicySettings)
-    tts: TTSSettings = Field(default_factory=TTSSettings)
-    asr: ASRSettings = Field(default_factory=ASRSettings)
-    memory: MemorySettings = Field(default_factory=MemorySettings)
-    persona: PersonaSettings = Field(default_factory=PersonaSettings)
+    orchestrator: OrchestratorSettings = Field(
+        default_factory=lambda: OrchestratorSettings()
+    )
+    policy: PolicySettings = Field(default_factory=lambda: PolicySettings())
+    tts: TTSSettings = Field(default_factory=lambda: TTSSettings())
+    asr: ASRSettings = Field(default_factory=lambda: ASRSettings())
+    memory: MemorySettings = Field(default_factory=lambda: MemorySettings())
+    persona: PersonaSettings = Field(default_factory=lambda: PersonaSettings())
 
     @model_validator(mode="before")
     @classmethod

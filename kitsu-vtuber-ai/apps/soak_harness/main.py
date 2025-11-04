@@ -181,9 +181,7 @@ class SoakHarness:
                     last_status = await self._fetch_status(orch_client)
                     self._assert_modules_healthy(last_status)
 
-                except (
-                    Exception
-                ) as exc:  # pragma: no cover - guard for real runtime
+                except Exception as exc:  # pragma: no cover - guard for real runtime
                     record.status = "error"
                     record.error = str(exc)
                     failures.append(
@@ -452,9 +450,7 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Runs the 2-hour Kitsu.exe soak test"
-    )
+    parser = argparse.ArgumentParser(description="Runs the 2-hour Kitsu.exe soak test")
     parser.add_argument(
         "--orchestrator-url",
         default=os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8000"),

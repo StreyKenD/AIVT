@@ -1,5 +1,5 @@
 <script lang="ts">
-  export type LatencyPoint = { ts: number; value: number };
+  import type { LatencyPoint } from '$lib/types';
 
   export let title: string;
   export let points: LatencyPoint[] = [];
