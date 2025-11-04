@@ -8,18 +8,40 @@ from typing import Any, AsyncIterator, Dict, Optional
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi import status as http_status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from libs.contracts import MuteCommand, PanicCommand, PresetCommand
 
 from libs.common import configure_json_logging
+from .ollama import OllamaSupervisor, parse_bool
 
+_DEFAULT_ALLOWED_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+}
 _ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://127.0.0.1:8000")
 _TELEMETRY_URL = os.getenv("TELEMETRY_BASE_URL", "http://127.0.0.1:8001")
 _ORCHESTRATOR_TOKEN = os.getenv("ORCHESTRATOR_API_KEY")
 _TELEMETRY_API_KEY = os.getenv("TELEMETRY_API_KEY")
+_POLICY_BACKEND = os.getenv("POLICY_BACKEND", "ollama").strip().lower()
+_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+_OLLAMA_AUTOSTART = parse_bool(os.getenv("OLLAMA_AUTOSTART"), default=True)
 
 _REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def _load_allowed_origins() -> list[str]:
+    env_value = os.getenv("CONTROL_ALLOWED_ORIGINS", "")
+    origins = set(_DEFAULT_ALLOWED_ORIGINS)
+    if env_value.strip():
+        for origin in env_value.split(","):
+            origin = origin.strip()
+            if origin:
+                origins.add(origin)
+    return sorted(origins)
 
 
 configure_json_logging("control_panel_backend")
@@ -101,18 +123,42 @@ def _build_telemetry_headers() -> Dict[str, str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gateway = ControlPanelGateway(_ORCHESTRATOR_URL, _TELEMETRY_URL)
-    logger.info(
-        "Control backend ready",
-        extra={"orchestrator": _ORCHESTRATOR_URL, "telemetry": _TELEMETRY_URL},
-    )
+    supervisor: Optional[OllamaSupervisor] = None
+    if _POLICY_BACKEND == "ollama":
+        supervisor = OllamaSupervisor(
+            _OLLAMA_URL,
+            autostart=_OLLAMA_AUTOSTART,
+        )
+        await supervisor.startup()
+    app.state.ollama_supervisor = supervisor
+    log_extra = {
+        "orchestrator": _ORCHESTRATOR_URL,
+        "telemetry": _TELEMETRY_URL,
+        "policy_backend": _POLICY_BACKEND,
+    }
+    if supervisor is not None:
+        log_extra["ollama_url"] = _OLLAMA_URL
+        log_extra["ollama_autostart"] = supervisor.can_manage and _OLLAMA_AUTOSTART
+    logger.info("Control backend ready", extra=log_extra)
     app.state.gateway = gateway
     try:
         yield
     finally:
         await gateway.close()
+        stored_supervisor = getattr(app.state, "ollama_supervisor", None)
+        if stored_supervisor is not None:
+            await stored_supervisor.shutdown()
 
 
 app = FastAPI(title="Kitsu Control Panel Backend", version="0.2.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_load_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def get_gateway() -> ControlPanelGateway:
@@ -122,13 +168,39 @@ async def get_gateway() -> ControlPanelGateway:
     return gateway
 
 
+async def get_supervisor() -> Optional[OllamaSupervisor]:
+    supervisor = getattr(app.state, "ollama_supervisor", None)
+    return supervisor
+
+
+def require_supervisor(
+    supervisor: Optional[OllamaSupervisor] = Depends(get_supervisor),
+) -> OllamaSupervisor:
+    if supervisor is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Policy backend does not use Ollama",
+        )
+    return supervisor
+
+
 @app.get("/status", response_model=Dict[str, Any])
 async def status(
     gateway: ControlPanelGateway = Depends(get_gateway),
+    supervisor: Optional[OllamaSupervisor] = Depends(get_supervisor),
 ) -> Dict[str, Any]:
     orchestrator = await gateway.orchestrator_get("/status")
     metrics = await gateway.telemetry_get("/metrics/latest")
-    return {"status": orchestrator, "metrics": metrics}
+    if supervisor is not None:
+        ollama = await supervisor.status()
+    else:
+        ollama = {
+            "backend": _POLICY_BACKEND,
+            "status": "unmanaged",
+            "autostart": False,
+            "is_local": False,
+        }
+    return {"status": orchestrator, "metrics": metrics, "ollama": ollama}
 
 
 @app.get("/metrics/latest", response_model=Dict[str, Any])
@@ -150,7 +222,9 @@ async def soak_results(
         "/events", params={"type": "soak.result", "limit": limit}
     )
     if not isinstance(events, list):
-        raise HTTPException(status_code=500, detail="Unexpected response from telemetry")
+        raise HTTPException(
+            status_code=500, detail="Unexpected response from telemetry"
+        )
     return {"items": events}
 
 
@@ -164,6 +238,33 @@ async def telemetry_export(
 
     headers = {"Content-Disposition": "attachment; filename=telemetry_events.csv"}
     return StreamingResponse(_generator(), headers=headers, media_type="text/csv")
+
+
+@app.get("/llm/status", response_model=Dict[str, Any])
+async def llm_status(
+    supervisor: Optional[OllamaSupervisor] = Depends(get_supervisor),
+) -> Dict[str, Any]:
+    if supervisor is None:
+        return {
+            "backend": _POLICY_BACKEND,
+            "status": "unmanaged",
+            "autostart": False,
+            "is_local": False,
+        }
+    return await supervisor.status()
+
+
+@app.post("/llm/start", response_model=Dict[str, Any])
+async def llm_start(
+    supervisor: OllamaSupervisor = Depends(require_supervisor),
+) -> Dict[str, Any]:
+    if not supervisor.can_manage:
+        raise HTTPException(
+            status_code=400,
+            detail="Ollama host is remote; please start it manually or disable autostart.",
+        )
+    await supervisor.ensure_started(force=True)
+    return await supervisor.status()
 
 
 @app.post(

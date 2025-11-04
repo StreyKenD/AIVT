@@ -160,5 +160,3 @@ if __name__ == "__main__":
         asyncio.run(_main())
     except KeyboardInterrupt:  # pragma: no cover - interactive
         print("\n[mic-test] stopped by user.")
-
-

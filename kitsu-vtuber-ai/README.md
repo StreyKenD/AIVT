@@ -109,7 +109,9 @@ Add `--preset hype` to swap persona presets before sending the message, or `--no
    poetry run python -m apps.pipeline_runner.main
    ```
 
-Use `PIPELINE_DISABLE` to skip integrations you do not have credentials for (e.g. `PIPELINE_DISABLE=twitch_ingest,avatar_controller`). The runner streams service logs and restarts crashes automatically.
+Use `PIPELINE_DISABLE` to skip integrations you do not have credentials for (e.g. `PIPELINE_DISABLE=twitch_ingest,avatar_controller`). The value is case-insensitive and accepts a comma-separated list; skipped services are logged at startup while the remaining workers retain automatic restarts and log streaming.
+
+When the policy backend is set to `ollama`, the runner checks `OLLAMA_AUTOSTART` (default `1`). Leave it enabled to auto-launch `ollama serve` on the local machine, or set it to `0`/`false` when you already manage the daemon or point at a remote host.
 
 Before launching the policy worker the supervisor pings `OLLAMA_URL`; if the socket is unreachable, the service is skipped with a clear warning (override with `PIPELINE_SKIP_OLLAMA_CHECK=1` when you deliberately want to start in a degraded mode).
 Set `POLICY_URL` in `.env` to the policy worker base URL (defaults to `http://127.0.0.1:8081`) so the orchestrator can reach it, and expose the TTS HTTP server via `TTS_HOST`, `TTS_PORT`, and `TTS_API_URL` (defaults to `http://127.0.0.1:8070`).
@@ -132,7 +134,7 @@ These variables control how the orchestrator exposes HTTP/WebSocket endpoints an
 - `ORCH_HOST`: bind interface used by `uvicorn` (default `127.0.0.1`). Use `0.0.0.0` when exposing the API to other machines or to a UI hosted outside the local host.
 - `ORCH_PORT`: public port for the orchestrator. Align this value with `PUBLIC_ORCH_BASE_URL` and `PUBLIC_ORCH_WS_URL` in the `kitsu-telemetry` repository; `8000` is the recommended development value.
 - `TELEMETRY_API_URL`: base URL (e.g., `http://127.0.0.1:8001`) where state events are published. When empty, the orchestrator runs without external telemetry.
-- `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: optional tokens to protect the `/events` endpoint (telemetry) and `/persona`/`/toggle` when accessed by external integrations.
+- `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: optional tokens to protect the `/events` endpoint (telemetry) and `/persona`/`/toggle` when accessed by external integrations. The orchestrator, GPU monitor, workers, and soak harness add the telemetry key as `X-API-Key`; configure the same secret on the telemetry server to enforce authentication.
 - `ORCHESTRATOR_URL`: HTTP address used by workers and integrations (Twitch, OBS, VTS) to publish events to the orchestrator.
 
 > Tip: once `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_REFRESH_TOKEN` are stored in `.env`, refresh the chat token any time with `poetry run python scripts/refresh_twitch_token.py`.

@@ -248,7 +248,7 @@ class BarkSynthesizer:
             from bark import SAMPLE_RATE, generate_audio, preload_models  # type: ignore
         except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
             raise RuntimeError(
-                "Bark is not installed. Install it with 'pip install bark-voice-clone'."
+                "Bark is not installed. Install it with 'pip install suno-bark'."
             ) from exc
         return {
             "generate_audio": generate_audio,
@@ -452,7 +452,7 @@ class TTSService:
         self._queue: asyncio.Queue[TTSJob] = asyncio.Queue()
         self._current_job: Optional[TTSJob] = None
         self._cancel_event = asyncio.Event()
-        self._telemetry = telemetry or TelemetryClient.from_env(service="tts_worker")
+        self._telemetry = telemetry or TelemetryClient.from_env(source="tts_worker")
         real_backends = [
             s for s in self._synthesizers if not isinstance(s, SilentSynthesizer)
         ]
@@ -592,12 +592,12 @@ class TTSService:
                     "Synthesizer %s failed: %s", synthesizer.__class__.__name__, exc
                 )
                 continue
-        raise RuntimeError(
-            last_error or "No synthesizer was able to generate audio"
-        )
+        raise RuntimeError(last_error or "No synthesizer was able to generate audio")
 
     @staticmethod
-    def _describe_voice(synthesizer: Synthesizer, requested_voice: Optional[str]) -> str:
+    def _describe_voice(
+        synthesizer: Synthesizer, requested_voice: Optional[str]
+    ) -> str:
         descriptor = getattr(synthesizer, "describe_voice", None)
         if callable(descriptor):
             resolved = descriptor(requested_voice)

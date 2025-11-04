@@ -33,4 +33,6 @@ async def toggle_module(
     try:
         return await orchestrator.toggle_module(module, payload.enabled)
     except KeyError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=404, detail=f"Unknown module: {module}") from exc
+        raise HTTPException(
+            status_code=404, detail=f"Unknown module: {module}"
+        ) from exc

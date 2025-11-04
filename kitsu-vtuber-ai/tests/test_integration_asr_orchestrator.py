@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from libs.config import reload_app_config
+from libs.contracts.asr import ASRFinalEvent, ASRPartialEvent
 from apps.asr_worker import ASRConfig, SpeechPipeline, TranscriptionResult
 from apps.asr_worker.metrics import ASRTelemetry
 
@@ -79,13 +80,15 @@ class _HTTPPublisher:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    async def publish(self, event_type: str, payload: Dict[str, object]) -> None:
-        await self._client.post("/events/asr", json={"type": event_type, **payload})
+    async def publish(self, event: ASRPartialEvent | ASRFinalEvent) -> None:
+        await self._client.post("/events/asr", json=event.model_dump())
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
-async def test_pipeline_posts_events_to_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pipeline_posts_events_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     reload_app_config()
     module = importlib.reload(importlib.import_module("apps.orchestrator.main"))
     app = module.app
@@ -138,7 +141,10 @@ async def test_pipeline_posts_events_to_orchestrator(monkeypatch: pytest.MonkeyP
         while len(observed) < 2:
             event = await asyncio.wait_for(queue.get(), timeout=5.0)
             event_type = event.get("type")
-            if event_type in {"asr_partial", "asr_final"} and event_type not in observed:
+            if (
+                event_type in {"asr_partial", "asr_final"}
+                and event_type not in observed
+            ):
                 observed[event_type] = event["payload"]
 
         assert observed["asr_partial"]["text"] == "integration partial"

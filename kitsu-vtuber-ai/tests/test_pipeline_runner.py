@@ -5,13 +5,18 @@ import importlib
 import sys
 import textwrap
 from pathlib import Path
-from typing import List
+from typing import TYPE_CHECKING, Any, List
 
 import pytest
+from libs.config import reload_app_config
+
+if TYPE_CHECKING:
+    from apps.pipeline_runner.main import ServiceSpec as ServiceSpecType
+else:
+    ServiceSpecType = Any
 
 runner = importlib.import_module("apps.pipeline_runner.main")
 ServiceSpec = runner.ServiceSpec
-from libs.config import reload_app_config
 
 
 def _write_minimal_config(tmp_path: Path) -> Path:
@@ -36,14 +41,20 @@ def _write_minimal_config(tmp_path: Path) -> Path:
     return config_file
 
 
-def test_service_specs_build_from_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_service_specs_build_from_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config_file = _write_minimal_config(tmp_path)
     monkeypatch.setenv("KITSU_CONFIG_FILE", str(config_file))
     monkeypatch.setenv("OLLAMA_AUTOSTART", "0")  # avoid spawning ollama in specs
     reload_app_config()
 
-    monkeypatch.setattr(runner, "_is_port_available", lambda host, port: True)
-    monkeypatch.setattr(runner, "_ollama_reachability_predicate", lambda url: (lambda: (True, None)))
+    monkeypatch.setattr(
+        runner, "port_predicate", lambda host, port: (lambda: (True, None))
+    )
+    monkeypatch.setattr(
+        runner, "ollama_reachability_predicate", lambda url: (lambda: (True, None))
+    )
 
     specs = list(runner._service_specs(sys.executable))
     names = [spec.name for spec in specs]
@@ -72,7 +83,9 @@ def test_service_specs_build_from_settings(monkeypatch: pytest.MonkeyPatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_run_pipeline_honours_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_run_pipeline_honours_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: List[tuple[str, str]] = []
 
     specs = [
@@ -84,7 +97,7 @@ async def test_run_pipeline_honours_disabled(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path / "logs"))
 
     async def fake_run_service(
-        spec: ServiceSpec,
+        spec: ServiceSpecType,
         env: dict[str, str],
         stop_event: asyncio.Event,
     ) -> None:
@@ -97,3 +110,48 @@ async def test_run_pipeline_honours_disabled(monkeypatch: pytest.MonkeyPatch, tm
     await runner.run_pipeline()
 
     assert calls == [("svc_one", str((tmp_path / "logs").resolve()))]
+
+
+def test_disabled_services_supports_prefixed_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PIPELINE_DISABLE", raising=False)
+    monkeypatch.setenv("PIPELINE_DISABLE_TTS_WORKER", "1")
+    monkeypatch.setenv("PIPELINE_DISABLE_OBS_CONTROLLER", "true")
+    monkeypatch.setenv("PIPELINE_DISABLE_POLICY_WORKER", "0")
+    monkeypatch.setenv("PIPELINE_DISABLE_AVATAR_CONTROLLER", "")
+
+    disabled = runner._disabled_services()
+
+    assert disabled == {"tts_worker", "obs_controller", "avatar_controller"}
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_honours_prefixed_disable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: List[str] = []
+
+    specs = [
+        ServiceSpec(name="tts_worker", command=["python", "-c", "print('tts')"]),
+        ServiceSpec(name="twitch_ingest", command=["python", "-c", "print('tw')"]),
+    ]
+
+    monkeypatch.setenv("PIPELINE_DISABLE_TTS_WORKER", "yes")
+    monkeypatch.delenv("PIPELINE_DISABLE", raising=False)
+    monkeypatch.setenv("KITSU_LOG_ROOT", str(tmp_path / "logs"))
+
+    async def fake_run_service(
+        spec: ServiceSpecType,
+        env: dict[str, str],
+        stop_event: asyncio.Event,
+    ) -> None:
+        calls.append(spec.name)
+        stop_event.set()
+
+    monkeypatch.setattr(runner, "_service_specs", lambda python: specs)
+    monkeypatch.setattr(runner, "_run_service", fake_run_service)
+
+    await runner.run_pipeline()
+
+    assert calls == ["twitch_ingest"]

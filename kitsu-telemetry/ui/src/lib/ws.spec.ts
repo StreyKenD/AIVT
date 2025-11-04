@@ -70,8 +70,8 @@ describe('createTelemetryStream', () => {
           last_updated: timestamp
         },
         modules: {
-          asr_worker: { state: 'online', latency_ms: 23.5, last_updated: timestamp },
-          tts_worker: { state: 'offline', latency_ms: 0.0, last_updated: timestamp }
+          asr_worker: { state: 'online', enabled: true, latency_ms: 23.5, last_updated: timestamp },
+          tts_worker: { state: 'offline', enabled: false, latency_ms: 0.0, last_updated: timestamp }
         },
         scene: 'Starting Soon',
         last_expression: { expression: 'smile', intensity: 0.6, ts: timestamp },
@@ -94,7 +94,8 @@ describe('createTelemetryStream', () => {
     const moduleTogglePayload: TelemetryMessage = {
       type: 'module.toggle',
       module: 'tts_worker',
-      enabled: true
+      enabled: true,
+      state: 'online'
     };
     const expressionPayload: TelemetryMessage = {
       type: 'expression',

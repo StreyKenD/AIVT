@@ -51,7 +51,9 @@ class VTubeStudioClient:
         auth_token: Optional[str] = None,
         websocket_factory: Optional[WebSocketFactory] = None,
     ) -> None:
-        self._url: str = url or os.getenv("VTS_URL", "ws://127.0.0.1:8001") or "ws://127.0.0.1:8001"
+        self._url: str = (
+            url or os.getenv("VTS_URL", "ws://127.0.0.1:8001") or "ws://127.0.0.1:8001"
+        )
         self._auth_token = auth_token or os.getenv("VTS_AUTH_TOKEN")
         self._plugin_name = os.getenv("VTS_PLUGIN_NAME", "Kitsu.exe Controller")
         self._developer = os.getenv("VTS_DEVELOPER", "Kitsu.exe")

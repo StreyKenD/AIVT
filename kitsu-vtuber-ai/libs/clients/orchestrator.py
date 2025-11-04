@@ -13,8 +13,7 @@ logger = logging.getLogger("kitsu.clients.orchestrator")
 class OrchestratorPublisher(Protocol):
     """Protocol describing the event publishing surface used by the ASR worker."""
 
-    async def publish(self, event: ASREventPayload) -> None:
-        ...
+    async def publish(self, event: ASREventPayload) -> None: ...
 
 
 class OrchestratorClient:

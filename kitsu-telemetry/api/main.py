@@ -15,7 +15,12 @@ from pydantic import BaseModel, Field, field_validator
 from . import storage
 from .log_reader import LogReaderError, query_logs
 
-_DEFAULT_ALLOWED_ORIGIN = "http://localhost:5173"
+_DEFAULT_ALLOWED_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+}
 _API_KEY = os.getenv("TELEMETRY_API_KEY")
 _RETENTION_SECONDS = int(os.getenv("TELEMETRY_RETENTION_SECONDS", "0") or 0)
 
@@ -94,11 +99,13 @@ async def _require_api_key(x_api_key: str | None = Header(None)) -> None:
 
 def _load_allowed_origins() -> list[str]:
     env_value = os.getenv("TELEMETRY_ALLOWED_ORIGINS", "")
-    if not env_value.strip():
-        return [_DEFAULT_ALLOWED_ORIGIN]
-    origins = [origin.strip() for origin in env_value.split(",")]
-    filtered = [origin for origin in origins if origin]
-    return filtered or [_DEFAULT_ALLOWED_ORIGIN]
+    origins = set(_DEFAULT_ALLOWED_ORIGINS)
+    if env_value.strip():
+        for origin in env_value.split(","):
+            origin = origin.strip()
+            if origin:
+                origins.add(origin)
+    return sorted(origins)
 
 
 def _normalize_events(payload: Any) -> list[TelemetryEventIn]:

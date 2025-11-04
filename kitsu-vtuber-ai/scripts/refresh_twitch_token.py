@@ -10,6 +10,7 @@ Expected environment variables (stored in .env):
 The script reads .env, requests a new access + refresh token from Twitch, and
 updates TWITCH_OAUTH_TOKEN (prefixed with 'oauth:') and TWITCH_REFRESH_TOKEN.
 """
+
 from __future__ import annotations
 
 import sys

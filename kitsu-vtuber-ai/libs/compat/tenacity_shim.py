@@ -45,9 +45,6 @@ class _RetryAttempt:
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc is None:
             self._parent._attempt = self._parent._max_attempts
-            return False
-        if self._parent._attempt < self._parent._max_attempts:
-            return True
         return False
 
     async def __aenter__(self) -> None:
@@ -56,9 +53,6 @@ class _RetryAttempt:
     async def __aexit__(self, exc_type, exc, tb) -> bool:
         if exc is None:
             self._parent._attempt = self._parent._max_attempts
-            return False
-        if self._parent._attempt < self._parent._max_attempts:
-            return True
         return False
 
 

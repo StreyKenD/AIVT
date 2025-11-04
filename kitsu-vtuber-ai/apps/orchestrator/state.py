@@ -39,19 +39,34 @@ class ModuleState:
 
     name: str
     enabled: bool = True
+    health: str = "online"
     latency_ms: float = field(default_factory=lambda: random.uniform(15, 50))
     last_updated: float = field(default_factory=time.time)
 
     def snapshot(self) -> Dict[str, Any]:
         return {
-            "state": "online" if self.enabled else "offline",
+            "state": self.health,
+            "enabled": self.enabled,
             "latency_ms": round(self.latency_ms, 2),
             "last_updated": self.last_updated,
         }
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
+        self.health = "online" if enabled else "offline"
         self.last_updated = time.time()
+
+    def mark_health(self, health: str) -> None:
+        self.health = health
+        self.last_updated = time.time()
+
+    def update_latency(
+        self, latency_ms: float, *, health: Optional[str] = None
+    ) -> None:
+        self.latency_ms = max(1.0, float(latency_ms))
+        self.last_updated = time.time()
+        if health is not None:
+            self.health = health
 
     def jitter(self) -> None:
         """Simulate latency jitter for dashboards."""
@@ -194,10 +209,16 @@ class OrchestratorState:
         if module not in self.modules:
             raise KeyError(module)
         async with self._lock:
-            self.modules[module].set_enabled(enabled)
+            module_state = self.modules[module]
+            module_state.set_enabled(enabled)
             if module == "tts_worker":
                 self.tts_muted = not enabled
-            payload = {"type": "module.toggle", "module": module, "enabled": enabled}
+            payload = {
+                "type": "module.toggle",
+                "module": module,
+                "enabled": enabled,
+                "state": module_state.health,
+            }
         await self._broker.publish(payload)
         return payload
 
@@ -237,10 +258,11 @@ class OrchestratorState:
                 self.active_preset = "custom"
             self.persona.last_updated = time.time()
             body = {
-                "type": "persona.update",
+                "type": "persona_update",
                 "ts": self.persona.last_updated,
                 "persona": self.persona.snapshot(),
                 "preset": self.active_preset,
+                "active_preset": self.active_preset,
             }
         await self._broker.publish(body)
         if announce:
@@ -273,12 +295,19 @@ class OrchestratorState:
         payload["summary_generated"] = summary_payload is not None
         return payload
 
-    def _mark_module_latency(self, module: str, latency_ms: float) -> None:
+    def _mark_module_latency(
+        self, module: str, latency_ms: float, *, health: Optional[str] = None
+    ) -> None:
         state = self.modules.get(module)
         if state is None:
             return
-        state.latency_ms = max(1.0, float(latency_ms))
-        state.last_updated = time.time()
+        state.update_latency(latency_ms, health=health)
+
+    def _set_module_health(self, module: str, health: str) -> None:
+        state = self.modules.get(module)
+        if state is None:
+            return
+        state.mark_health(health)
 
     async def handle_asr_final(self, event: ASREventPayload) -> None:
         if event.type != "asr_final":
@@ -312,12 +341,21 @@ class OrchestratorState:
         start = time.perf_counter()
         final_payload = await self._policy_invoker(request_body, self._broker)
         latency_ms = (time.perf_counter() - start) * 1000
-        self._mark_module_latency("policy_worker", latency_ms)
         if final_payload is None:
+            self._mark_module_latency("policy_worker", latency_ms, health="offline")
             logger.warning("Policy worker returned no final payload for request")
             return None
+        status_meta = None
+        if isinstance(final_payload, dict):
+            meta = final_payload.get("meta")
+            if isinstance(meta, dict):
+                status_meta = meta.get("status")
+        if isinstance(status_meta, str) and status_meta.lower() == "error":
+            self._mark_module_latency("policy_worker", latency_ms, health="offline")
+        else:
+            self._mark_module_latency("policy_worker", latency_ms, health="online")
 
-        await self._broker.publish({"type": "policy.final", "payload": final_payload})
+        await self._broker.publish({"type": "policy_final", "payload": final_payload})
 
         speech_content = _extract_speech(final_payload.get("content", ""))
         if not speech_content:
@@ -336,13 +374,21 @@ class OrchestratorState:
             final_payload.get("request_id"),
         )
         tts_latency_ms = (time.perf_counter() - tts_start) * 1000
-        self._mark_module_latency("tts_worker", tts_latency_ms)
         if tts_result is not None:
-            await self._broker.publish({"type": "tts.generated", "payload": tts_result})
+            self._mark_module_latency("tts_worker", tts_latency_ms, health="online")
+            await self._broker.publish({"type": "tts_generated", "payload": tts_result})
+        else:
+            self._mark_module_latency("tts_worker", tts_latency_ms, health="offline")
         voice_hint = None
         if isinstance(tts_result, dict):
             voice_hint = tts_result.get("voice")
-        await self.record_tts(TTSRequestPayload(text=speech_content, voice=voice_hint))
+        await self.record_tts(
+            TTSRequestPayload(
+                text=speech_content,
+                voice=voice_hint,
+                request_id=final_payload.get("request_id"),
+            )
+        )
         return final_payload
 
     def _build_policy_request(self, text: str) -> Dict[str, Any]:
@@ -433,8 +479,9 @@ class OrchestratorState:
             persona_update, preset_name=preset, announce=True
         )
         payload = {
-            "type": "control.preset",
+            "type": "control_preset",
             "preset": preset,
+            "active_preset": preset,
             "ts": time.time(),
         }
         await self._broker.publish(payload)

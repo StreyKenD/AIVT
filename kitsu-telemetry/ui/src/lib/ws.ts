@@ -33,12 +33,15 @@ type LegacyTelemetryMessage =
 
 type OrchestratorEvent =
   | { type: 'status'; payload: OrchestratorStatus }
-  | { type: 'module.toggle'; module: string; enabled: boolean }
+  | { type: 'module.toggle'; module: string; enabled: boolean; state?: string }
   | { type: 'persona_update'; persona: PersonaSnapshot }
   | { type: 'tts_request'; data: TTSRecord; summary_generated?: boolean }
   | { type: 'obs_scene'; scene: string; ts: number }
   | { type: 'vts_expression'; data: ExpressionSnapshot }
-  | { type: 'memory_summary'; summary: MemorySummary };
+  | { type: 'memory_summary'; summary: MemorySummary }
+  | { type: 'control.mute'; muted: boolean }
+  | { type: 'control.panic'; ts?: number; reason?: string | null }
+  | { type: 'control.preset'; preset?: string };
 
 export type TelemetryMessage = OrchestratorEvent | LegacyTelemetryMessage;
 
@@ -393,7 +396,8 @@ function isPersonaSnapshot(value: unknown): value is PersonaSnapshot {
 function isModuleStatus(value: unknown): value is ModuleStatus {
   if (!isRecord(value)) return false;
   return (
-    (value.state === 'online' || value.state === 'offline') &&
+    typeof value.state === 'string' &&
+    typeof value.enabled === 'boolean' &&
     isNumber(value.latency_ms) &&
     isNumber(value.last_updated)
   );

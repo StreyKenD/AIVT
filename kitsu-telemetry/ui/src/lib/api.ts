@@ -1,4 +1,5 @@
 import { env as publicEnv } from '$env/dynamic/public';
+import type { StatusVariant } from '$lib/types';
 
 const DEFAULT_ORCH_BASE_URL = 'http://localhost:8000';
 const ORCH_BASE_URL = sanitizeBaseUrl(
@@ -10,12 +11,18 @@ const CONTROL_BASE_URL = sanitizeBaseUrl(
   publicEnv.PUBLIC_CONTROL_BASE_URL ?? DEFAULT_CONTROL_BASE_URL,
   DEFAULT_CONTROL_BASE_URL
 );
+const DEFAULT_TELEMETRY_BASE_URL = 'http://localhost:8001';
+const TELEMETRY_BASE_URL = sanitizeBaseUrl(
+  publicEnv.PUBLIC_TELEMETRY_BASE_URL ?? DEFAULT_TELEMETRY_BASE_URL,
+  DEFAULT_TELEMETRY_BASE_URL
+);
 
 type JsonObject = { [key: string]: JsonValue };
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
 export type ModuleStatus = {
-  state: 'online' | 'offline';
+  state: StatusVariant | string;
+  enabled: boolean;
   latency_ms: number;
   last_updated: number;
 };
@@ -80,6 +87,7 @@ export type ToggleModuleResponse = {
   type: 'module.toggle';
   module: string;
   enabled: boolean;
+  state?: string;
 };
 
 export type PersonaUpdatePayload = Partial<Pick<PersonaSnapshot, 'style' | 'chaos_level' | 'energy' | 'family_mode'>>;
@@ -128,14 +136,90 @@ export type LatestMetrics = {
   >;
 };
 
+export type LlmStatus = {
+  backend: string;
+  status: string;
+  autostart: boolean;
+  is_local: boolean;
+  managed: boolean;
+  url: string;
+  host: string;
+  port: number;
+  pid: number | null;
+  last_error?: string | null;
+};
+
+export type ControlStatusResponse = {
+  status: OrchestratorStatus;
+  metrics: LatestMetrics;
+  ollama: LlmStatus;
+};
+
 export type SoakResult = {
   ts: string;
   type: string;
   payload: Record<string, JsonValue>;
 };
 
-export async function getStatus(): Promise<OrchestratorStatus> {
+export type LogEntry = {
+  ts: string;
+  service: string;
+  level: string;
+  message: string;
+  logger?: string | null;
+  extra?: Record<string, JsonValue> | null;
+  exception?: string | null;
+  file: string;
+};
+
+export async function fetchControlStatus(): Promise<ControlStatusResponse> {
+  return controlRequest<ControlStatusResponse>('/status');
+}
+
+export async function getOrchestratorStatus(): Promise<OrchestratorStatus> {
   return apiRequest<OrchestratorStatus>('/status');
+}
+
+export type LogQuery = {
+  limit?: number;
+  order?: 'asc' | 'desc';
+  level?: string;
+  service?: string;
+  contains?: string;
+  since?: string;
+};
+
+export async function fetchLogs(query: LogQuery = {}): Promise<LogEntry[]> {
+  const params = new URLSearchParams();
+  if (query.limit) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.order) {
+    params.set('order', query.order);
+  }
+  if (query.level) {
+    params.set('level', query.level);
+  }
+  if (query.service) {
+    params.set('service', query.service);
+  }
+  if (query.contains) {
+    params.set('contains', query.contains);
+  }
+  if (query.since) {
+    params.set('since', query.since);
+  }
+  const search = params.toString();
+  const path = search ? `/logs?${search}` : '/logs';
+  return telemetryRequest<LogEntry[]>(path);
+}
+
+export async function getLlmStatus(): Promise<LlmStatus> {
+  return controlRequest<LlmStatus>('/llm/status');
+}
+
+export async function startLlm(): Promise<LlmStatus> {
+  return controlRequest<LlmStatus>('/llm/start', { method: 'POST' });
 }
 
 export async function toggleModule(module: string, enabled: boolean): Promise<ToggleModuleResponse> {
@@ -196,13 +280,13 @@ export async function applyPreset(preset: string): Promise<JsonObject> {
 
 export async function fetchLatestMetrics(windowSeconds = 300): Promise<LatestMetrics> {
   const search = new URLSearchParams({ window_seconds: String(windowSeconds) });
-  return controlRequest<LatestMetrics>(`/metrics/latest?${search.toString()}`);
+  return telemetryRequest<LatestMetrics>(`/metrics/latest?${search.toString()}`);
 }
 
 export async function fetchSoakResults(limit = 10): Promise<SoakResult[]> {
-  const search = new URLSearchParams({ limit: String(limit) });
-  const response = await controlRequest<{ items: SoakResult[] }>(`/soak/results?${search}`);
-  return response.items;
+  const search = new URLSearchParams({ limit: String(limit), type: 'soak.result' });
+  const response = await telemetryRequest<SoakResult[]>(`/events?${search}`);
+  return response;
 }
 
 export async function downloadTelemetryCsv(): Promise<Blob> {
@@ -288,6 +372,31 @@ async function controlRequest<T>(path: string, init: RequestInit = {}): Promise<
 
 async function controlFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const url = combineUrl(CONTROL_BASE_URL, path);
+  const requestInit: RequestInit = { ...init };
+  requestInit.headers = buildHeaders(requestInit);
+  return fetch(url, requestInit);
+}
+
+async function telemetryRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await telemetryFetch(path, init);
+
+  let parsed: JsonValue | undefined;
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    parsed = (await response.json()) as JsonValue;
+  } else if (response.status !== 204) {
+    parsed = (await response.text()) as unknown as JsonValue;
+  }
+
+  if (!response.ok) {
+    throw new ApiError(extractErrorMessage(parsed, response.status), response.status, parsed);
+  }
+
+  return parsed as T;
+}
+
+async function telemetryFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = combineUrl(TELEMETRY_BASE_URL, path);
   const requestInit: RequestInit = { ...init };
   requestInit.headers = buildHeaders(requestInit);
   return fetch(url, requestInit);

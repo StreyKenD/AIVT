@@ -66,9 +66,24 @@ class _MockOrchestratorClient:
         if path == "/status":
             payload = {
                 "modules": {
-                    "asr_worker": {"state": "online"},
-                    "policy_worker": {"state": "online"},
-                    "tts_worker": {"state": "online"},
+                    "asr_worker": {
+                        "state": "online",
+                        "enabled": True,
+                        "latency_ms": 0.0,
+                        "last_updated": 0.0,
+                    },
+                    "policy_worker": {
+                        "state": "online",
+                        "enabled": True,
+                        "latency_ms": 0.0,
+                        "last_updated": 0.0,
+                    },
+                    "tts_worker": {
+                        "state": "online",
+                        "enabled": True,
+                        "latency_ms": 0.0,
+                        "last_updated": 0.0,
+                    },
                 },
                 "persona": {
                     "style": "kawaii",
@@ -91,9 +106,7 @@ class _MockPolicyStream:
     async def __aenter__(self) -> "_MockPolicyStream":
         return self
 
-    async def __aexit__(
-        self, exc_type, exc, tb
-    ) -> None:  # pragma: no cover - not used
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - not used
         return None
 
     def raise_for_status(self) -> None:

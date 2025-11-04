@@ -30,7 +30,7 @@ _telemetry_client = (
     TelemetryClient(
         orchestrator_cfg.telemetry_url,
         api_key=orchestrator_cfg.telemetry_api_key,
-        service="tts_worker",
+        source="tts_worker",
     )
     if orchestrator_cfg.telemetry_url
     else None

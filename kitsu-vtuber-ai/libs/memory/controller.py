@@ -102,25 +102,27 @@ class MemoryController:
                     self.history_path.unlink()
 
     async def _persist_history(self) -> None:
-        if not self._history_enabled or self.history_path is None:
+        history_path = self.history_path
+        if not self._history_enabled or history_path is None:
             return
         data = {"turns": [turn.to_dict() for turn in self.buffer.as_list()]}
         text = json.dumps(data, ensure_ascii=False, indent=2)
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
-                None, lambda: self.history_path.write_text(text, encoding="utf-8")
+                None, lambda: history_path.write_text(text, encoding="utf-8")
             )
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning("Failed to persist memory history: %s", exc)
 
     async def _load_history(self) -> None:
-        if not self._history_enabled or self.history_path is None:
+        history_path = self.history_path
+        if not self._history_enabled or history_path is None:
             return
         loop = asyncio.get_running_loop()
         try:
             raw = await loop.run_in_executor(
-                None, lambda: self.history_path.read_text(encoding="utf-8")
+                None, lambda: history_path.read_text(encoding="utf-8")
             )
         except FileNotFoundError:
             return

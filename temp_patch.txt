@@ -1,0 +1,20 @@
+*** Begin Patch
+*** Update File: kitsu-telemetry/api/log_reader.py
+@@
+ def _resolve_log_root() -> Path:
+     env_value = os.getenv("KITSU_LOG_ROOT") or os.getenv("LOG_ROOT")
+     if env_value:
+         root = Path(env_value).expanduser()
+     else:
+-        root = Path.cwd() / "logs"
++        root = Path.cwd() / "logs"
++        if not root.exists():
++            sibling = Path.cwd().parent / "kitsu-vtuber-ai" / "logs"
++            if sibling.exists():
++                return sibling.resolve()
+     try:
+         return root.resolve()
+     except FileNotFoundError:
+         return root
+*** End Patch
+

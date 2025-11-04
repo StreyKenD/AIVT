@@ -108,7 +108,7 @@ class ASRTelemetry:
 
 
 def create_telemetry() -> ASRTelemetry:
-    client = TelemetryClient.from_env(service="asr_worker")
+    client = TelemetryClient.from_env(source="asr_worker")
     return ASRTelemetry(client)
 
 

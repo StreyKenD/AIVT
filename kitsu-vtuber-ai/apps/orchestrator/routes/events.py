@@ -46,7 +46,9 @@ async def stream_events(
     await websocket.accept()
     token, queue = await broker.subscribe()
     try:
-        await websocket.send_json({"type": "status", "payload": orchestrator.snapshot()})
+        await websocket.send_json(
+            {"type": "status", "payload": orchestrator.snapshot()}
+        )
         while True:
             message = await queue.get()
             await websocket.send_json(message)

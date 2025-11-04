@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, cast
 
 from libs.config import reload_app_config
 
@@ -57,11 +57,14 @@ class ASRConfig:
 
 
 def load_config() -> ASRConfig:
-    settings = reload_app_config().asr
+    app_settings = reload_app_config()
+    settings = app_settings.asr
+    orch_base_url = cast(str, app_settings.orchestrator.base_url)
+    orchestrator_url = settings.orchestrator_url or orch_base_url
 
     return ASRConfig(
         model_name=settings.model_name,
-        orchestrator_url=settings.orchestrator_url,
+        orchestrator_url=orchestrator_url,
         sample_rate=settings.sample_rate,
         frame_duration_ms=settings.frame_duration_ms,
         partial_interval_ms=settings.partial_interval_ms,

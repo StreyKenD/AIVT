@@ -24,19 +24,16 @@ class Transcriber(Protocol):
 
 
 class NumpyArray(Protocol):
-    def astype(self, dtype: object) -> "NumpyArray":
-        ...
+    def astype(self, dtype: object) -> "NumpyArray": ...
 
-    def __truediv__(self, other: float) -> "NumpyArray":
-        ...
+    def __truediv__(self, other: float) -> "NumpyArray": ...
 
 
 class NumpyModule(Protocol):
     int16: object
     float32: object
 
-    def frombuffer(self, buffer: bytes, dtype: object) -> NumpyArray:
-        ...
+    def frombuffer(self, buffer: bytes, dtype: object) -> NumpyArray: ...
 
 
 class SegmentLike(Protocol):
@@ -54,8 +51,7 @@ class WhisperModelLike(Protocol):
         condition_on_previous_text: bool,
         vad_filter: bool,
         without_timestamps: bool,
-    ) -> tuple[Iterable[SegmentLike], object | None]:
-        ...
+    ) -> tuple[Iterable[SegmentLike], object | None]: ...
 
 
 def build_transcriber(config: ASRConfig) -> Transcriber:
@@ -159,7 +155,10 @@ def _build_sherpa_transcriber(config: ASRConfig) -> Transcriber:
         raise RuntimeError("numpy is required for the Sherpa-ONNX backend")
     numpy_module = cast(NumpyModule, numpy_module_obj)
     recognizer = _create_sherpa_recognizer(sherpa_module, config.sherpa)
-    logger.info("ASR transcriber initialised (backend=sherpa, provider=%s)", config.sherpa.provider)
+    logger.info(
+        "ASR transcriber initialised (backend=sherpa, provider=%s)",
+        config.sherpa.provider,
+    )
     return SherpaOnnxTranscriber(recognizer, config.sample_rate, numpy_module)
 
 
@@ -170,7 +169,9 @@ def _create_sherpa_recognizer(module: object, sherpa_cfg: SherpaConfig) -> objec
 
     if sherpa_cfg.config_file:
         config_cls = getattr(module, "OfflineRecognizerConfig", None)
-        if config_cls is None or not hasattr(config_cls, "from_yaml"):  # pragma: no cover - dependency guard
+        if config_cls is None or not hasattr(
+            config_cls, "from_yaml"
+        ):  # pragma: no cover - dependency guard
             raise RuntimeError(
                 "The installed sherpa_onnx version does not support loading from YAML configs."
             )
@@ -218,7 +219,9 @@ def _create_sherpa_recognizer(module: object, sherpa_cfg: SherpaConfig) -> objec
 
 
 class SherpaOnnxTranscriber:
-    def __init__(self, recognizer: object, sample_rate: int, numpy_module: NumpyModule) -> None:
+    def __init__(
+        self, recognizer: object, sample_rate: int, numpy_module: NumpyModule
+    ) -> None:
         self._recognizer = recognizer
         self._sample_rate = sample_rate
         self._np = numpy_module
