@@ -6,14 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from libs.contracts import ChatIngestCommand
 
-from ..deps import get_state
+from ..deps import get_state, require_orchestrator_token
 from ..schemas import ManualChatRequest
 from ..state import OrchestratorState
 
 router = APIRouter()
 
 
-@router.post("/ingest/chat")
+@router.post("/ingest/chat", dependencies=[Depends(require_orchestrator_token)])
 async def ingest_chat(
     payload: ChatIngestCommand,
     orchestrator: OrchestratorState = Depends(get_state),
@@ -25,7 +25,7 @@ async def ingest_chat(
     }
 
 
-@router.post("/chat/respond")
+@router.post("/chat/respond", dependencies=[Depends(require_orchestrator_token)])
 async def respond_via_chat(
     payload: ManualChatRequest,
     orchestrator: OrchestratorState = Depends(get_state),

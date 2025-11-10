@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends
 
 from libs.contracts import TTSRequestPayload
 
-from ..deps import get_state
+from ..deps import get_state, require_orchestrator_token
 from ..state import OrchestratorState
 
 router = APIRouter()
 
 
-@router.post("/tts")
+@router.post("/tts", dependencies=[Depends(require_orchestrator_token)])
 async def request_tts(
     payload: TTSRequestPayload,
     orchestrator: OrchestratorState = Depends(get_state),

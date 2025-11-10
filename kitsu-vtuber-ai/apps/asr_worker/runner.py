@@ -28,75 +28,59 @@ async def run(config: ASRConfig | None = None) -> None:
     config = config or load_config()
     orchestrator = OrchestratorClient(config.orchestrator_url)
     telemetry = create_telemetry()
-    attempt = 0
-    backoff = 1.0
+    attempt = 1
     try:
         transcriber = build_transcriber(config)
-        while True:
-            attempt += 1
-            current_backoff = backoff
-            try:
-                vad = build_vad(config)
-            except Exception as exc:
-                logger.exception("ASR worker failed to initialise VAD: %s", exc)
-                logger.warning(
-                    "Falling back to passthrough VAD. Set ASR_VAD=none to disable VAD explicitly."
-                )
-                vad = PassthroughVAD(config.frame_bytes)
-
-            pipeline = SpeechPipeline(
-                config=config,
-                transcriber=transcriber,
-                vad=vad,
-                orchestrator=orchestrator,
-                telemetry=telemetry,
-                allow_non_english=config.allow_non_english,
+        try:
+            vad = build_vad(config)
+        except Exception as exc:
+            logger.exception("ASR worker failed to initialise VAD: %s", exc)
+            logger.warning(
+                "Falling back to passthrough VAD. Set ASR_VAD=none to disable VAD explicitly."
             )
+            vad = PassthroughVAD(config.frame_bytes)
 
-            if attempt == 1:
-                logger.info(
-                    (
-                        "Starting ASR worker with model=%s, sample_rate=%s Hz, frame_ms=%s, "
-                        "partial_interval_ms=%s, vad=%s"
-                    ),
-                    config.model_name,
-                    config.sample_rate,
-                    config.frame_duration_ms,
-                    config.partial_interval_ms,
-                    vad.__class__.__name__,
-                )
-            else:
-                logger.warning(
-                    "ASR worker restarting audio capture (attempt %d, backoff %.1fs)",
-                    attempt,
-                    current_backoff,
-                )
+        pipeline = SpeechPipeline(
+            config=config,
+            transcriber=transcriber,
+            vad=vad,
+            orchestrator=orchestrator,
+            telemetry=telemetry,
+            allow_non_english=config.allow_non_english,
+        )
 
-            await telemetry.cycle_started(attempt, current_backoff)
+        logger.info(
+            (
+                "Starting ASR worker with model=%s, sample_rate=%s Hz, frame_ms=%s, "
+                "partial_interval_ms=%s, vad=%s"
+            ),
+            config.model_name,
+            config.sample_rate,
+            config.frame_duration_ms,
+            config.partial_interval_ms,
+            vad.__class__.__name__,
+        )
 
-            try:
-                async with acquire_audio_source(config) as source:
-                    await pipeline.process(source.frames())
-                logger.warning("Audio frame stream ended; restarting capture loop")
-                await telemetry.cycle_completed(attempt, "stream_end")
-            except asyncio.CancelledError:
-                current_task = asyncio.current_task()
-                if current_task is not None and current_task.cancelled():
-                    raise
-                logger.warning(
-                    "ASR capture loop cancelled unexpectedly on attempt %d; retrying",
-                    attempt,
-                    exc_info=True,
-                )
-                await telemetry.cycle_completed(attempt, "cancelled")
-            except Exception as exc:
-                logger.exception("ASR worker capture loop failed: %s", exc)
-                await telemetry.cycle_completed(
-                    attempt, "error", detail=type(exc).__name__
-                )
+        await telemetry.cycle_started(attempt, 0.0)
 
-            await asyncio.sleep(current_backoff)
-            backoff = min(current_backoff * 2, 30.0)
+        try:
+            async with acquire_audio_source(config) as source:
+                await pipeline.process(source.frames())
+        except asyncio.CancelledError:
+            await telemetry.cycle_completed(attempt, "cancelled")
+            raise
+        except Exception as exc:
+            logger.exception("ASR worker capture loop failed: %s", exc)
+            await telemetry.cycle_completed(
+                attempt, "error", detail=type(exc).__name__
+            )
+            raise
+        else:
+            logger.warning(
+                "ASR worker capture loop ended unexpectedly; requesting supervisor restart"
+            )
+            await telemetry.cycle_completed(attempt, "stream_end")
+            raise RuntimeError("ASR audio stream ended unexpectedly")
     finally:
         await telemetry.aclose()
         await orchestrator.aclose()

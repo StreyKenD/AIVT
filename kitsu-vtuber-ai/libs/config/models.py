@@ -30,6 +30,7 @@ class OrchestratorSettings(BaseModel):
     tts_timeout_seconds: float = Field(60.0, ge=0.0)
     telemetry_url: Optional[str] = None
     telemetry_api_key: Optional[str] = None
+    api_key: Optional[str] = None
     cors_allow_all: bool = False
     cors_allow_origins: List[str] = Field(default_factory=list)
     gpu_metrics_interval_seconds: float = Field(30.0, ge=5.0)
@@ -113,7 +114,7 @@ class PolicySettings(BaseModel):
     bind_host: str = "0.0.0.0"
     bind_port: int = 8081
     endpoint_url: Optional[str] = None
-    model_name: str = "mixtral:8x7b-instruct-q4_K_M"
+    model_name: str = "mixtral:7b-instruct-v0.1-q4_0"
     backend: str = "ollama"
     family_friendly: bool = True
     stream_timeout: float = Field(30.0, ge=1.0)

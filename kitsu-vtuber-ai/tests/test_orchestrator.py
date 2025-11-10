@@ -10,8 +10,15 @@ import pytest
 
 from libs.config import reload_app_config
 
-pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
+pytest.importorskip("fastapi", reason="orchestrator depends on FastAPI")
 from fastapi.testclient import TestClient
+
+class _OKResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
 
 if TYPE_CHECKING:
     from libs.compat.tenacity_shim import AsyncRetrying, stop_after_attempt, wait_fixed
@@ -31,6 +38,8 @@ def load_orchestrator(
     tmp_path: Path,
     restore: bool = False,
     telemetry_url: Optional[str] = None,
+    telemetry_api_key: Optional[str] = None,
+    orchestrator_api_key: Optional[str] = None,
     persona_presets_file: Optional[Path] = None,
     persona_default: Optional[str] = None,
 ):
@@ -40,6 +49,14 @@ def load_orchestrator(
         monkeypatch.setenv("TELEMETRY_API_URL", telemetry_url)
     else:
         monkeypatch.delenv("TELEMETRY_API_URL", raising=False)
+    if telemetry_api_key is not None:
+        monkeypatch.setenv("TELEMETRY_API_KEY", telemetry_api_key)
+    else:
+        monkeypatch.delenv("TELEMETRY_API_KEY", raising=False)
+    if orchestrator_api_key is not None:
+        monkeypatch.setenv("ORCHESTRATOR_API_KEY", orchestrator_api_key)
+    else:
+        monkeypatch.delenv("ORCHESTRATOR_API_KEY", raising=False)
     if persona_presets_file is not None:
         monkeypatch.setenv("PERSONA_PRESETS_FILE", str(persona_presets_file))
     else:
@@ -105,6 +122,54 @@ def test_toggle_and_ingest_chat(
         assert refreshed["modules"]["tts_worker"]["state"] == "offline"
         assert refreshed["modules"]["tts_worker"]["enabled"] is False
         assert refreshed["control"]["tts_muted"] is True
+
+
+def test_protected_endpoints_require_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = load_orchestrator(
+        monkeypatch, tmp_path, orchestrator_api_key="kitsusecret"
+    )
+    with TestClient(module.app) as client:
+        public_status = client.get("/status")
+        assert public_status.status_code == 200
+
+        asr_payload = {
+            "type": "asr_partial",
+            "segment": 0,
+            "text": "hello there",
+            "confidence": 0.9,
+            "language": "en",
+            "started_at": 0.0,
+            "ended_at": 0.1,
+            "latency_ms": 5.0,
+        }
+
+        protected_cases = [
+            ("POST", "/persona", {"style": "chaotic"}, 200),
+            ("POST", "/control/mute", {"muted": True}, 200),
+            ("POST", "/control/panic", {"reason": "testing"}, 200),
+            ("POST", "/obs/scene", {"scene": "Studio"}, 200),
+            ("POST", "/ingest/chat", {"role": "user", "text": "Hi"}, 200),
+            ("POST", "/events/asr", asr_payload, 200),
+        ]
+
+        for method, path, payload, _expected in protected_cases:
+            response = client.request(method, path, json=payload)
+            assert response.status_code == 401
+
+        for method, path, payload, expected in protected_cases:
+            response = client.request(
+                method, path, json=payload, headers={"X-API-Key": "kitsusecret"}
+            )
+            assert response.status_code == expected
+
+        bearer_response = client.post(
+            "/persona",
+            json={"style": "cozy"},
+            headers={"Authorization": "Bearer kitsusecret"},
+        )
+        assert bearer_response.status_code == 200
 
 
 def test_chat_webui_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -370,8 +435,14 @@ def test_publish_sends_telemetry(
                 self.base_url = base_url
                 self.timeout = timeout
 
-            async def post(self, path: str, json: dict[str, Any]) -> None:
-                calls.append({"path": path, "json": json})
+            async def post(
+                self,
+                path: str,
+                json: dict[str, Any],
+                headers: Optional[dict[str, str]] = None,
+            ) -> "_OKResponse":
+                calls.append({"path": path, "json": json, "headers": headers})
+                return _OKResponse()
 
             async def aclose(self) -> None:  # pragma: no cover - simple stub
                 return
@@ -400,6 +471,51 @@ def test_publish_sends_telemetry(
     asyncio.run(_scenario())
 
 
+def test_publish_sends_telemetry_with_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def _scenario() -> None:
+        captured: dict[str, Any] = {}
+
+        class DummyClient:
+            def __init__(self, base_url: str, timeout: object) -> None:
+                self.base_url = base_url
+                self.timeout = timeout
+
+            async def post(
+                self,
+                path: str,
+                json: dict[str, Any],
+                headers: Optional[dict[str, str]] = None,
+            ) -> "_OKResponse":
+                captured["path"] = path
+                captured["json"] = json
+                captured["headers"] = headers
+                return _OKResponse()
+
+            async def aclose(self) -> None:  # pragma: no cover - simple stub
+                return
+
+        module = load_orchestrator(
+            monkeypatch,
+            tmp_path,
+            telemetry_url="https://telemetry.local",
+            telemetry_api_key="kitsu-secret",
+        )
+        monkeypatch.setattr(module.httpx, "AsyncClient", DummyClient)
+        await module.telemetry.startup()
+
+        await module.broker.publish({"type": "status", "payload": {"ok": True}})
+
+        assert captured["path"] == "/events"
+        headers = captured["headers"]
+        assert headers is not None and headers.get("X-API-Key") == "kitsu-secret"
+
+        await module.telemetry.shutdown()
+
+    asyncio.run(_scenario())
+
+
 def test_telemetry_retries_on_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -413,12 +529,18 @@ def test_telemetry_retries_on_failure(
                 self.timeout = timeout
                 self._calls = 0
 
-            async def post(self, path: str, json: dict[str, Any]) -> None:
+            async def post(
+                self,
+                path: str,
+                json: dict[str, Any],
+                headers: Optional[dict[str, str]] = None,
+            ) -> "_OKResponse":
                 self._calls += 1
                 attempts.append(self._calls)
                 if self._calls < 3:
                     raise RuntimeError("boom")
                 events.append(json)
+                return _OKResponse()
 
             async def aclose(self) -> None:  # pragma: no cover - simple stub
                 return

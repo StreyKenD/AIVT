@@ -2,13 +2,108 @@
   "turns": [
     {
       "role": "user",
-      "text": "ping",
-      "ts": 1762215183.38059
+      "text": "you",
+      "ts": 1762778763.2408457
     },
     {
-      "role": "assistant",
-      "text": "Hello!",
-      "ts": 1762215183.3815887
+      "role": "user",
+      "text": "Bye.",
+      "ts": 1762778792.9314072
+    },
+    {
+      "role": "user",
+      "text": "Thank you.",
+      "ts": 1762778798.6034212
+    },
+    {
+      "role": "user",
+      "text": "Okay.",
+      "ts": 1762778841.0748365
+    },
+    {
+      "role": "user",
+      "text": "Okay.",
+      "ts": 1762778877.2308264
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762778905.1978729
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762778960.4096382
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779017.1313558
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779058.2984946
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779059.216177
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779060.9996316
+    },
+    {
+      "role": "user",
+      "text": "I'll see you next time.",
+      "ts": 1762779130.6089911
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779147.0495627
+    },
+    {
+      "role": "user",
+      "text": "Okay.",
+      "ts": 1762779178.8347926
+    },
+    {
+      "role": "user",
+      "text": "Okay.",
+      "ts": 1762779183.5495808
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779250.465053
+    },
+    {
+      "role": "user",
+      "text": "Okay.",
+      "ts": 1762779260.3889186
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779406.9875727
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779479.8023834
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779508.353499
+    },
+    {
+      "role": "user",
+      "text": "you",
+      "ts": 1762779510.3178113
     }
   ]
 }

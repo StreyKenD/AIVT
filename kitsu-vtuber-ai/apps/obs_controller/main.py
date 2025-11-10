@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
-from typing import Optional
+from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import urlparse
 
 from libs.common import configure_json_logging
@@ -16,6 +17,8 @@ except ImportError:  # pragma: no cover - offline/dev environments
 
 configure_json_logging("obs_controller")
 logger = logging.getLogger("kitsu.obs")
+
+T = TypeVar("T")
 
 
 class OBSController:
@@ -39,6 +42,13 @@ class OBSController:
         self._lock = asyncio.Lock()
         self._connected = asyncio.Event()
 
+    async def _run_blocking(
+        self, func: Callable[..., T], *args: Any, **kwargs: Any
+    ) -> T:
+        loop = asyncio.get_running_loop()
+        bound = functools.partial(func, *args, **kwargs)
+        return await loop.run_in_executor(None, bound)
+
     async def connect(self) -> None:
         if obsws is None:
             logger.warning("obsws-python not installed; running in dry mode")
@@ -49,12 +59,16 @@ class OBSController:
             try:
                 logger.info("Connecting to OBS at %s", self.ws_url)
                 client = obsws(self.host, self.port, self.password)
-                client.connect()
+                await self._run_blocking(client.connect)
                 self._client = client
                 self._connected.set()
                 logger.info("OBS connection established")
                 return
+            except asyncio.CancelledError:
+                self._connected.clear()
+                raise
             except Exception as exc:  # pragma: no cover - runtime guard
+                self._connected.clear()
                 logger.warning(
                     "OBS connection failed: %s (retrying in %.1fs)", exc, backoff
                 )
@@ -75,7 +89,11 @@ class OBSController:
         if self._client is None:
             return
         try:
-            self._client.call("SetCurrentProgramScene", {"sceneName": scene})
+            await self._run_blocking(
+                self._client.call, "SetCurrentProgramScene", {"sceneName": scene}
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # pragma: no cover - runtime guard
             logger.warning("OBS scene switch failed: %s", exc)
             self._connected.clear()
@@ -91,7 +109,8 @@ class OBSController:
             "on" if enabled else "off",
         )
         try:
-            self._client.call(
+            await self._run_blocking(
+                self._client.call,
                 "SetSourceFilterEnabled",
                 {
                     "sourceName": source,
@@ -99,6 +118,8 @@ class OBSController:
                     "filterEnabled": enabled,
                 },
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # pragma: no cover - runtime guard
             logger.warning("Failed to toggle filter: %s", exc)
             self._connected.clear()

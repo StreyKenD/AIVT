@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from libs.config import reload_app_config
 
-pytest.importorskip("fastapi", reason="orquestrador depende de FastAPI")
+pytest.importorskip("fastapi", reason="orchestrator depends on FastAPI")
 
 
 def test_receive_asr_event_publishes_to_broker_and_updates_state() -> None:

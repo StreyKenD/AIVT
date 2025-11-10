@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -157,14 +158,46 @@ async def test_event_ingest_batch_filter_and_export(telemetry_db):
         gpu_metrics = metrics_body["metrics"].get("hardware.gpu")
         assert gpu_metrics is not None
         assert gpu_metrics["temperature_c"]["avg"] == 62.0
+        assert gpu_metrics["temperature_c"]["sum"] == 62.0
         assert gpu_metrics["utilization_pct"]["avg"] == 70.0
+        assert gpu_metrics["utilization_pct"]["sum"] == 70.0
         assert gpu_metrics["memory_pct"]["avg"] == 50.0
+        assert gpu_metrics["memory_pct"]["sum"] == 50.0
 
         prune_response = await async_client.post(
             "/maintenance/prune", params={"max_age_seconds": 60}
         )
         assert prune_response.status_code == 200
         assert "removed" in prune_response.json()
+
+
+@pytest.mark.asyncio
+async def test_event_ingest_maps_service_to_source_with_warning(
+    telemetry_db, caplog: pytest.LogCaptureFixture
+) -> None:
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver", headers=API_HEADERS
+    ) as async_client:
+        caplog.set_level(logging.WARNING)
+        raw_event = {
+            "type": "status",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "payload": {"ok": True},
+            "service": "legacy-service",
+            "extra_field": "ignored",
+        }
+        response = await async_client.post("/events", json=raw_event)
+        assert response.status_code == 200
+
+    events = await storage.list_events(db_path=str(telemetry_db))
+    assert events
+    latest = events[0]
+    assert latest.source == "legacy-service"
+    assert latest.payload == {"ok": True}
+    assert "legacy field 'service'" in caplog.text
+    assert "Dropping unsupported telemetry fields" in caplog.text
 
 
 def test_uvicorn_import(telemetry_db, monkeypatch):
@@ -198,6 +231,16 @@ async def test_requires_api_key(telemetry_db):
     async with AsyncClient(transport=transport, base_url="http://testserver") as insecure_client:
         response = await insecure_client.get("/events")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_rejects_invalid_api_key(telemetry_db):
+    await storage.init_db(db_path=str(telemetry_db))
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/events", headers={"x-api-key": "wrong-key"})
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid API key"}
 
 
 @pytest.mark.asyncio

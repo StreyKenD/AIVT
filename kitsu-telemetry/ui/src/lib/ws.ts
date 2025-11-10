@@ -10,26 +10,8 @@ import type {
   TTSRecord
 } from './api';
 
-type MetricPayload = {
-  fps: number;
-  cpu: number;
-  gpu: number;
-  viewers: number;
-  vu: number[];
-};
-
-type ConsolePayload = {
-  level: 'info' | 'warning' | 'error';
-  message: string;
-};
-
 const DEFAULT_ORCH_WS_URL = 'ws://localhost:8000';
 const ORCH_WS_URL = publicEnv.PUBLIC_ORCH_WS_URL ?? DEFAULT_ORCH_WS_URL;
-
-type LegacyTelemetryMessage =
-  | { type: 'metrics'; data: MetricPayload }
-  | { type: 'console'; data: ConsolePayload }
-  | { type: 'expression'; data: { expression: string } };
 
 type OrchestratorEvent =
   | { type: 'status'; payload: OrchestratorStatus }
@@ -43,7 +25,7 @@ type OrchestratorEvent =
   | { type: 'control.panic'; ts?: number; reason?: string | null }
   | { type: 'control.preset'; preset?: string };
 
-export type TelemetryMessage = OrchestratorEvent | LegacyTelemetryMessage;
+export type TelemetryMessage = OrchestratorEvent;
 
 const STREAM_PATH = '/stream';
 const BASE_RECONNECT_DELAY_MS = 500;
@@ -307,7 +289,7 @@ const defaultSchedule: TimeoutScheduler = (handler, timeout) => setTimeout(handl
 const defaultCancel: TimeoutCanceller = (handle) => clearTimeout(handle);
 
 function isTelemetryMessage(payload: unknown): payload is TelemetryMessage {
-  return isOrchestratorEvent(payload) || isLegacyTelemetryMessage(payload);
+  return isOrchestratorEvent(payload);
 }
 
 function isOrchestratorEvent(payload: unknown): payload is OrchestratorEvent {
@@ -336,50 +318,6 @@ function isOrchestratorEvent(payload: unknown): payload is OrchestratorEvent {
     default:
       return false;
   }
-}
-
-function isLegacyTelemetryMessage(payload: unknown): payload is LegacyTelemetryMessage {
-  if (!isRecord(payload) || typeof payload.type !== 'string') {
-    return false;
-  }
-
-  if (payload.type === 'metrics') {
-    return isMetricsPayload(payload.data);
-  }
-
-  if (payload.type === 'console') {
-    return isConsolePayload(payload.data);
-  }
-
-  if (payload.type === 'expression') {
-    return (
-      isRecord(payload.data) && typeof payload.data.expression === 'string'
-    );
-  }
-
-  return false;
-}
-
-function isMetricsPayload(value: unknown): value is MetricPayload {
-  if (!isRecord(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    isNumber(record.fps) &&
-    isNumber(record.cpu) &&
-    isNumber(record.gpu) &&
-    isNumber(record.viewers) &&
-    Array.isArray(record.vu) &&
-    record.vu.every((entry) => typeof entry === 'number')
-  );
-}
-
-function isConsolePayload(value: unknown): value is ConsolePayload {
-  if (!isRecord(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.message === 'string' &&
-    (record.level === 'info' || record.level === 'warning' || record.level === 'error')
-  );
 }
 
 function isPersonaSnapshot(value: unknown): value is PersonaSnapshot {

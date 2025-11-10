@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -23,6 +24,11 @@ _DEFAULT_ALLOWED_ORIGINS = {
 }
 _API_KEY = os.getenv("TELEMETRY_API_KEY")
 _RETENTION_SECONDS = int(os.getenv("TELEMETRY_RETENTION_SECONDS", "0") or 0)
+
+logger = logging.getLogger("kitsu.telemetry.api")
+
+_ALLOWED_EVENT_KEYS = {"type", "ts", "payload", "source"}
+_LEGACY_FIELD_MAP = {"service": "source"}
 
 
 class TelemetryEventIn(BaseModel):
@@ -119,6 +125,27 @@ def _normalize_events(payload: Any) -> list[TelemetryEventIn]:
     return [_coerce_event(payload)]
 
 
+def _prepare_direct_event(item: dict[str, Any]) -> dict[str, Any]:
+    data = dict(item)
+    if "service" in data and "source" not in data:
+        data["source"] = data.pop("service")
+        logger.warning(
+            "Telemetry event used legacy field 'service'; mapping to 'source'."
+        )
+    else:
+        data.pop("service", None)
+    extra_fields = sorted(
+        key for key in data.keys() if key not in _ALLOWED_EVENT_KEYS
+    )
+    if extra_fields:
+        logger.warning(
+            "Dropping unsupported telemetry fields: %s", ", ".join(extra_fields)
+        )
+        for key in extra_fields:
+            data.pop(key, None)
+    return data
+
+
 def _coerce_event(item: Any) -> TelemetryEventIn:
     if not isinstance(item, dict):
         raise HTTPException(
@@ -127,7 +154,7 @@ def _coerce_event(item: Any) -> TelemetryEventIn:
         )
 
     if "type" in item and "ts" in item:
-        return TelemetryEventIn.model_validate(item)
+        return TelemetryEventIn.model_validate(_prepare_direct_event(item))
 
     if "event_type" in item:
         legacy = LegacyTelemetryIn.model_validate(item)

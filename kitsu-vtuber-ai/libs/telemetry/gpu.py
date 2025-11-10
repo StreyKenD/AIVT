@@ -7,7 +7,7 @@ from typing import Any, Optional, Protocol
 logger = logging.getLogger("kitsu.telemetry.gpu")
 
 
-class TelemetryPublisher(Protocol):
+class TelemetryClientProtocol(Protocol):
     async def publish(self, event_type: str, payload: dict[str, object]) -> None: ...
 
     async def aclose(self) -> None: ...
@@ -18,7 +18,7 @@ class GPUMonitor:
 
     def __init__(
         self,
-        telemetry: Optional[TelemetryPublisher],
+        telemetry: Optional[TelemetryClientProtocol],
         *,
         interval_seconds: float = 30.0,
         nvml: Any | None = None,

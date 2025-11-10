@@ -14,7 +14,7 @@ Kitsu.exe is the backbone of the "Kitsu" VTuber AI – a kawaii, chaotic fox tha
 
 ### Service contracts
 - Shared request/response shapes now live in `libs/contracts/`. ASR, TTS, policy, and control-plane workers all import these Pydantic models so we only define the wire format once.
-- Thin async HTTP helpers (e.g. the orchestrator publisher used by the ASR worker) are under `libs/clients/`. Use these instead of ad-hoc `httpx` calls when a service needs to reach another one.
+- Thin async HTTP helpers (e.g. orchestrator API clients used by the ASR worker) are under `libs/clients/`. Use these instead of ad-hoc `httpx` calls when a service needs to reach another one.
 - Each worker module (`apps/*`) keeps its FastAPI app or runner logic, but they no longer import code from another worker; cross-service communication goes through the contracts/clients packages.
 
 ### Configuration
@@ -35,9 +35,10 @@ Kitsu.exe is the backbone of the "Kitsu" VTuber AI – a kawaii, chaotic fox tha
 3. Update `config/kitsu.yaml` (or set env overrides) with the downloaded paths under `asr.sherpa.*` and set `asr.backend` to `sherpa`.
 
 - `policy.backend` controls which LLM connector the policy worker uses:
-  - `ollama` (default): streams from the local Ollama daemon at `policy.ollama_url`. Pull the model referenced by `LLM_MODEL_NAME` (Mixtral by default) with `ollama pull`.
+  - `ollama` (default): streams from the local Ollama daemon at `policy.ollama_url`. Pull the model referenced by `LLM_MODEL_NAME` (Mixtral 7B by default) with `ollama pull`.
   - `openai`: calls the OpenAI Chat Completions API. Install the optional dependencies with `poetry install -E openai`, set `OPENAI_API_KEY`, and choose the target model via `policy.openai.model`.
   - `local`: runs HuggingFace Transformers locally. Install with `poetry install -E local-llm` (installs `transformers` + `torch`) and configure `policy.local.model_path` / `tokenizer_path` / `device` / `max_new_tokens` as needed.
+- Example configuration ships with Piper as the sole TTS backend to remain fully open source. You can still switch to the other engines below if you enable them explicitly.
 - `tts.backend` toggles between voice synthesizers:
   - `coqui` (default): uses lightweight multi-speaker Coqui models and honours `tts.coqui.speaker_map` for voice aliases.
   - `xtts`: loads Coqui XTTS v2 for multilingual voice cloning; set `tts.xtts.default_speaker_wav` (or map names via `tts.xtts.speaker_wavs`) and optionally override per-voice languages.
@@ -119,7 +120,7 @@ Set `POLICY_URL` in `.env` to the policy worker base URL (defaults to `http://12
 ### Manual shells (when you need to debug a single worker)
 
 ```bash
-poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-9000}
 poetry run uvicorn apps.control_panel_backend.main:app --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
 poetry run python -m apps.asr_worker.main
 poetry run python -m apps.policy_worker.main
@@ -132,7 +133,7 @@ poetry run python -m apps.tts_worker.main
 These variables control how the orchestrator exposes HTTP/WebSocket endpoints and where events are forwarded for telemetry:
 
 - `ORCH_HOST`: bind interface used by `uvicorn` (default `127.0.0.1`). Use `0.0.0.0` when exposing the API to other machines or to a UI hosted outside the local host.
-- `ORCH_PORT`: public port for the orchestrator. Align this value with `PUBLIC_ORCH_BASE_URL` and `PUBLIC_ORCH_WS_URL` in the `kitsu-telemetry` repository; `8000` is the recommended development value.
+- `ORCH_PORT`: public port for the orchestrator. Align this value with `PUBLIC_ORCH_BASE_URL` and `PUBLIC_ORCH_WS_URL` in the `kitsu-telemetry` repository; `9000` is the recommended development value.
 - `TELEMETRY_API_URL`: base URL (e.g., `http://127.0.0.1:8001`) where state events are published. When empty, the orchestrator runs without external telemetry.
 - `TELEMETRY_API_KEY` / `ORCHESTRATOR_API_KEY`: optional tokens to protect the `/events` endpoint (telemetry) and `/persona`/`/toggle` when accessed by external integrations. The orchestrator, GPU monitor, workers, and soak harness add the telemetry key as `X-API-Key`; configure the same secret on the telemetry server to enforce authentication.
 - `ORCHESTRATOR_URL`: HTTP address used by workers and integrations (Twitch, OBS, VTS) to publish events to the orchestrator.
@@ -222,7 +223,7 @@ Keep these references available whenever you share builds or recordings.
 - Exposed on `/status` under `memory.current_summary` and `restore_context`.
 
 ## Policy / LLM
-- `apps/policy_worker` supports pluggable LLM connectors configured via `policy.backend` (`ollama`, `openai`, or `local`). The default Ollama path streams from `policy.ollama_url` and uses **Mixtral** (`LLM_MODEL_NAME=mixtral:8x7b-instruct-q4_K_M`)—run `ollama pull mixtral:8x7b-instruct-q4_K_M` (or your chosen model) before the first boot. For OpenAI, install the optional extra with `poetry install -E openai` and set `OPENAI_API_KEY`/`policy.openai.model`. For local transformers, install `poetry install -E local-llm` and point `policy.local.model_path` (plus `tokenizer_path`, `device`, etc.) at the HF model you want to serve.
+- `apps/policy_worker` supports pluggable LLM connectors configured via `policy.backend` (`ollama`, `openai`, or `local`). The default Ollama path streams from `policy.ollama_url` and uses **Mixtral 7B** (`LLM_MODEL_NAME=mixtral:7b-instruct-v0.1-q4_0`)—run `ollama pull mixtral:7b-instruct-v0.1-q4_0` (or your chosen model) before the first boot. For OpenAI, install the optional extra with `poetry install -E openai` and set `OPENAI_API_KEY`/`policy.openai.model`. For local transformers, install `poetry install -E local-llm` and point `policy.local.model_path` (plus `tokenizer_path`, `device`, etc.) at the HF model you want to serve.
 - The `POST /respond` endpoint returns an SSE stream (`text/event-stream`) with `start`, `token`, `retry`, and `final` events. Each `token` represents the incremental XML stream; the `final` event includes metrics (`latency_ms`, `stats`) and persona metadata.
 - The prompt combines system instructions and few-shots to reinforce the kawaii/chaotic style, energy/chaos levels (`chaos_level`, `energy`), and family mode (`POLICY_FAMILY_FRIENDLY`).
 - Family-friendly filtering is enforced by a synchronous moderation pipeline (`configs/safety/` + `libs.safety.ModerationPipeline`). Forbidden prompts return a safe message immediately; final responses go through an additional scan and, if necessary, are sanitized before reaching TTS.
@@ -236,8 +237,8 @@ Keep these references available whenever you share builds or recordings.
 - The `cancel_active()` method still stops in-progress jobs before the next synthesized chunk, making barge-in/interrupt scenarios safe.
 
 ## Local Web UI & Overlay
-- A lightweight chat console lives at `http://127.0.0.1:8000/webui/chat`. It connects to the orchestrator WebSocket, streams partial tokens, and lets you send text prompts (optionally skipping TTS) without opening the full telemetry dashboard.
-- OBS-friendly captions are available at `http://127.0.0.1:8000/webui/overlay`. Load the page as a browser source with transparency enabled to display Kitsu’s current line on stream.
+- A lightweight chat console lives at `http://127.0.0.1:9000/webui/chat`. It connects to the orchestrator WebSocket, streams partial tokens, and lets you send text prompts (optionally skipping TTS) without opening the full telemetry dashboard.
+- OBS-friendly captions are available at `http://127.0.0.1:9000/webui/overlay`. Load the page as a browser source with transparency enabled to display Kitsu’s current line on stream.
 - `POST /chat/respond` accepts `{text, play_tts}` to trigger the same pipeline programmatically (handy for scripts or testing without the UI).
 - Both pages are static HTML/JS bundles served directly by the orchestrator, so no extra build step is required.
 

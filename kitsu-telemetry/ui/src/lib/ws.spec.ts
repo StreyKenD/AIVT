@@ -97,29 +97,35 @@ describe('createTelemetryStream', () => {
       enabled: true,
       state: 'online'
     };
-    const expressionPayload: TelemetryMessage = {
-      type: 'expression',
-      data: { expression: 'Happy' }
+    const memorySummaryPayload: TelemetryMessage = {
+      type: 'memory_summary',
+      summary: {
+        id: 7,
+        summary_text: 'Stream recap',
+        mood_state: 'focused',
+        metadata: { hype: 0.9 },
+        ts: timestamp
+      }
     };
     const vtsExpressionPayload: TelemetryMessage = {
       type: 'vts_expression',
       data: { expression: 'wink', intensity: 0.7, ts: timestamp }
     };
 
-    const expressionString = JSON.stringify(expressionPayload);
-    const splitIndex = Math.floor(expressionString.length / 2);
+    const summaryString = JSON.stringify(memorySummaryPayload);
+    const splitIndex = Math.floor(summaryString.length / 2);
 
     socket.emitMessage(
-      `${JSON.stringify(statusPayload)}\n${JSON.stringify(moduleTogglePayload)}\n${expressionString.slice(0, splitIndex)}`
+      `${JSON.stringify(statusPayload)}\n${JSON.stringify(moduleTogglePayload)}\n${summaryString.slice(0, splitIndex)}`
     );
     expect(received).toHaveLength(2);
-    socket.emitMessage(`${expressionString.slice(splitIndex)}\n`);
+    socket.emitMessage(`${summaryString.slice(splitIndex)}\n`);
     expect(received).toHaveLength(3);
     socket.emitMessage(`${JSON.stringify(vtsExpressionPayload)}\n`);
     expect(received).toHaveLength(4);
     expect(received[0]).toEqual(statusPayload);
     expect(received[1]).toEqual(moduleTogglePayload);
-    expect(received[2]).toEqual(expressionPayload);
+    expect(received[2]).toEqual(memorySummaryPayload);
     expect(received[3]).toEqual(vtsExpressionPayload);
 
     unsubscribe();

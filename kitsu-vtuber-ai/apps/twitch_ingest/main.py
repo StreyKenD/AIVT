@@ -66,7 +66,13 @@ class OrchestratorBridge:
 
     def __init__(self, base_url: str, api_key: Optional[str] = None) -> None:
         self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"))
-        self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        if api_key:
+            self._headers = {
+                "X-API-Key": api_key,
+                "Authorization": f"Bearer {api_key}",
+            }
+        else:
+            self._headers = None
 
     async def toggle_tts(self, enabled: bool) -> None:
         await self._post("/toggle/tts_worker", {"enabled": enabled})
@@ -193,13 +199,13 @@ class StubBot:
 
 
 async def run() -> None:
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8000")
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:9000")
     api_key = os.getenv("ORCHESTRATOR_API_KEY")
     bridge = OrchestratorBridge(orchestrator_url, api_key)
     router = TwitchCommandRouter(bridge)
 
     if commands is None:
-        logger.warning("twitchio not installed; using stub bot")
+        logger.warning("Twitch stub enabled: twitchio not installed")
         bot = StubBot(router)
         await bot.run()
         return
@@ -207,7 +213,10 @@ async def run() -> None:
     twitch_token = os.getenv("TWITCH_OAUTH_TOKEN")
     twitch_channel = os.getenv("TWITCH_CHANNEL")
     if not twitch_token or not twitch_channel:
-        raise RuntimeError("TWITCH_OAUTH_TOKEN and TWITCH_CHANNEL must be configured")
+        logger.warning("Twitch stub enabled: credentials missing; using stub bot")
+        bot = StubBot(router)
+        await bot.run()
+        return
 
     nick = os.getenv("TWITCH_BOT_NICK", "kitsu-bot")
 

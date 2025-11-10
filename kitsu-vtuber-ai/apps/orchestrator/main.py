@@ -17,7 +17,7 @@ from libs.telemetry import TelemetryClient
 from libs.telemetry.gpu import GPUMonitor
 
 from .broker import EventBroker
-from .deps import set_broker, set_state
+from .deps import set_api_key, set_broker, set_state
 from .routes import ALL_ROUTERS
 from .state import OrchestratorState
 from .telemetry import TelemetryDispatcher
@@ -182,6 +182,7 @@ state = OrchestratorState(
 
 set_broker(broker)
 set_state(state)
+set_api_key(orchestrator_cfg.api_key)
 
 gpu_telemetry = (
     TelemetryClient(

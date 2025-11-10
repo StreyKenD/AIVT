@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from libs.contracts import ModuleToggleCommand
 
-from ..deps import get_state
+from ..deps import get_state, require_orchestrator_token
 from ..state import OrchestratorState
 
 router = APIRouter()
@@ -24,7 +24,7 @@ async def get_status(
     return orchestrator.snapshot()
 
 
-@router.post("/toggle/{module}")
+@router.post("/toggle/{module}", dependencies=[Depends(require_orchestrator_token)])
 async def toggle_module(
     module: str,
     payload: ModuleToggleCommand,
