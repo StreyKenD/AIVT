@@ -87,11 +87,17 @@ class TelemetryClient:
         try:
             response = await client.post("/events", **request_kwargs)
             response.raise_for_status()
-        except Exception as exc:  # pragma: no cover - network noise
-            logger.debug(
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - network noise
+            logger.warning(
+                "Telemetry API responded with %s for %s; dropping event.",
+                exc.response.status_code,
+                event_type,
+                exc_info=True,
+            )
+        except httpx.HTTPError as exc:  # pragma: no cover - network noise
+            logger.warning(
                 "Failed to send telemetry %s: %s", event_type, exc, exc_info=True
             )
-            raise
 
     async def aclose(self) -> None:
         if self._client is None:
