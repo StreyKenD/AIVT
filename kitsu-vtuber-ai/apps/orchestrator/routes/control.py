@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from libs.contracts import MuteCommand, PanicCommand, PresetCommand
 
-from ..deps import get_state
+from ..deps import get_state, require_orchestrator_token
 from ..state import OrchestratorState
 
 router = APIRouter()
 
 
-@router.post("/control/panic")
+@router.post("/control/panic", dependencies=[Depends(require_orchestrator_token)])
 async def trigger_panic(
     payload: PanicCommand,
     orchestrator: OrchestratorState = Depends(get_state),
@@ -20,7 +20,7 @@ async def trigger_panic(
     return await orchestrator.trigger_panic(payload.reason)
 
 
-@router.post("/control/mute")
+@router.post("/control/mute", dependencies=[Depends(require_orchestrator_token)])
 async def toggle_mute(
     payload: MuteCommand,
     orchestrator: OrchestratorState = Depends(get_state),
@@ -28,7 +28,7 @@ async def toggle_mute(
     return await orchestrator.set_mute(payload.muted)
 
 
-@router.post("/control/preset")
+@router.post("/control/preset", dependencies=[Depends(require_orchestrator_token)])
 async def apply_preset(
     payload: PresetCommand,
     orchestrator: OrchestratorState = Depends(get_state),

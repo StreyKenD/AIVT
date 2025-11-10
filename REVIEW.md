@@ -7,7 +7,7 @@
    References: `TelemetryClient`【F:kitsu-vtuber-ai/libs/telemetry/__init__.py†L39-L55】 and API validation【F:kitsu-telemetry/api/main.py†L71-L75】【F:kitsu-telemetry/README.md†L27-L35】.
 
 2. **Orchestrator publisher ignores `TELEMETRY_API_KEY` entirely**  
-   The `TelemetryPublisher` used by the `EventBroker` never sets authentication headers when calling `/events`. Enabling the API key therefore causes every orchestrator broadcast to fail even if the variable exists in `.env`.  
+   The telemetry dispatcher used by the `EventBroker` never sets authentication headers when calling `/events`. Enabling the API key therefore causes every orchestrator broadcast to fail even if the variable exists in `.env`.  
    References: current implementation【F:kitsu-vtuber-ai/apps/orchestrator/main.py†L213-L236】 and environment docs requiring the token【F:kitsu-vtuber-ai/README.md†L100-L124】.
 
 3. **Events drop the source identifier**  
@@ -16,6 +16,6 @@
 
 ## Recommendations
 
-- Align the authentication headers (`X-API-Key`) for both `TelemetryClient` and `TelemetryPublisher`, reusing the already documented variables.
+- Align the authentication headers (`X-API-Key`) for both `TelemetryClient` and any dispatcher helpers, reusing the already documented variables.
 - Populate the service identifier under `source` (or allow extra fields in the API model) to keep telemetry data segmented by component.
 - Add tests covering scenarios with the API key enabled to ensure authentication regressions are caught early.

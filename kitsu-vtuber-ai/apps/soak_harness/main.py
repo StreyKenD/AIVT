@@ -453,7 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Runs the 2-hour Kitsu.exe soak test")
     parser.add_argument(
         "--orchestrator-url",
-        default=os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8000"),
+        default=os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:9000"),
         help="Base endpoint for the orchestrator",
     )
     parser.add_argument(

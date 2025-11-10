@@ -170,6 +170,10 @@ _register(
     _map(("asr", "orchestrator_url")),
 )
 _register(
+    "ORCHESTRATOR_API_KEY",
+    _map(("orchestrator", "api_key"), _strip_or_none),
+)
+_register(
     "POLICY_TIMEOUT_SECONDS",
     _map(("orchestrator", "policy_timeout_seconds")),
 )

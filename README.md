@@ -120,7 +120,7 @@ The script posts to `/chat/respond`, prints the streamed response, and records t
 ## 5. Manual commands (if you prefer individual shells)
 
 ```bash
-poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-8000}
+poetry run uvicorn apps.orchestrator.main:app --reload --host ${ORCH_HOST:-127.0.0.1} --port ${ORCH_PORT:-9000}
 poetry run uvicorn apps.control_panel_backend.main:app --reload --host ${CONTROL_PANEL_HOST:-127.0.0.1} --port ${CONTROL_PANEL_PORT:-8100}
 poetry run python -m apps.asr_worker.main
 poetry run python -m apps.policy_worker.main
@@ -157,7 +157,7 @@ cd ui
 pnpm dev -- --host 127.0.0.1 --port 5173
 ```
 
-Set `PUBLIC_ORCH_BASE_URL`, `PUBLIC_ORCH_WS_URL`, and `PUBLIC_CONTROL_BASE_URL` in `ui/.env.local` to reference `http://127.0.0.1:8000` and `http://127.0.0.1:8100`.
+Set `PUBLIC_ORCH_BASE_URL`, `PUBLIC_ORCH_WS_URL`, and `PUBLIC_CONTROL_BASE_URL` in `ui/.env.local` to reference `http://127.0.0.1:9000` and `http://127.0.0.1:8100`.
 
 ---
 

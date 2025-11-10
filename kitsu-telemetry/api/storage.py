@@ -69,10 +69,10 @@ def _accumulate_numeric(bucket: dict[str, Any], key: str, value: Any) -> None:
         return
     stats = bucket.setdefault(
         key,
-        {"avg": 0.0, "max": number, "min": number, "_count": 0},
+        {"sum": 0.0, "max": number, "min": number, "_count": 0},
     )
     stats["_count"] += 1
-    stats["avg"] += number
+    stats["sum"] += number
     stats["max"] = max(stats["max"], number)
     stats["min"] = min(stats["min"], number)
 
@@ -273,7 +273,9 @@ async def latest_metrics(
             if not count:
                 bucket.pop(key)
                 continue
-            value["avg"] = round(value["avg"] / count, 2)
+            total = value.get("sum", 0.0)
+            value["sum"] = round(total, 2)
+            value["avg"] = round(total / count, 2)
             value["max"] = round(value["max"], 2)
             value["min"] = round(value["min"], 2)
     return {"window_seconds": window_seconds, "metrics": metrics}

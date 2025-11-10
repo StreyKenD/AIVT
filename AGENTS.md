@@ -60,7 +60,7 @@ libs/common/: contains logging.py (we saw structured logging config), possibly H
 
 libs/contracts/: centralised Pydantic models that describe every HTTP payload exchanged between services (ASR events, control commands, TTS requests, etc.). Reuse these instead of redefining schemas.
 
-libs/clients/: thin async wrappers around cross-service HTTP calls (e.g. the orchestrator publisher used by ASR). Import from here when a worker needs to contact another service.
+libs/clients/: thin async wrappers around cross-service HTTP calls (e.g. orchestrator API helpers used by ASR). Import from here when a worker needs to contact another service.
 
 config/: centralised YAML (`config/kitsu.yaml`) that feeds the shared config loader. Copy the example file and adjust per-environment instead of scattering new environment variables.
 
@@ -96,9 +96,9 @@ No Busy Waiting: Don't write loops that sleep or block waiting for something wit
 
 Logging: Use import logging; logger = logging.getLogger(__name__) or similar to get a module-specific logger. Our configure_json_logging(service_name) is called in each main to set up JSON formatting. Log messages should be meaningful. Include context like IDs or names if logging within a loop etc. For errors, use logger.exception within an except to get stack trace. For expected conditions, use logger.warning or info. Debug logs are off by default but can be enabled, so feel free to add logger.debug for very detailed internals that might help in debugging without spamming normal output.
 
-Error Handling: Each service's main loop (see ASR run_forever) is wrapped in a try/except to catch exceptions and keep running
+Error Handling: The pipeline runner supervises every worker. Let fatal errors bubble up so the supervisor can restart the process, but still handle recoverable issues locally with clear logs and telemetry.
 GitHub
-. When writing code inside these loops, handle exceptions gracefully - if an error is recoverable, catch it, log a warning, maybe send an error event to telemetry, but don't let it crash out unless it's truly unrecoverable. This system should ideally never hard-crash; it should self-recover or at least fail only one component. For instance, if TTS fails to synthesize (maybe due to a bad input), it should log error and maybe output a default "..." audio or skip, rather than bringing down the whole pipeline.
+When writing worker code, handle recoverable errors gracefully: log meaningful warnings, emit telemetry, and continue processing when it is safe to do so. Let unrecoverable failures bubble up so the supervisor restarts just that component. For example, if TTS cannot synthesise because of bad input, log the failure and emit a harmless placeholder rather than crashing the whole stack.
 
 Modularity: When adding new features, try to do so in a self-contained way. If it's big, consider making a new module in apps/ or a new file in libs/. For example, if adding a new ASR backend (say Sherpa-ONNX), implement it as an alternative Transcriber class and allow selection via config, rather than cluttering the existing Whisper code with if sherpa: ... if whisper: .... If the feature introduces a new cross-service payload, extend `libs/contracts` and, when needed, add a helper to `libs/clients` so other workers stay decoupled.
 

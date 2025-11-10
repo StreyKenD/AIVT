@@ -8,6 +8,7 @@ orchestrator:
   tts_timeout_seconds: 60.0
   telemetry_url: http://127.0.0.1:8001
   telemetry_api_key: ""
+  api_key: ""
   cors_allow_all: false
   cors_allow_origins:
     - http://localhost:5173
@@ -20,7 +21,7 @@ policy:
   bind_host: 0.0.0.0
   bind_port: 8081
   endpoint_url: http://127.0.0.1:8081
-  model_name: mixtral:8x7b-instruct-q4_K_M
+  model_name: mixtral:7b-instruct-v0.1-q4_0
   backend: ollama
   family_friendly: true
   stream_timeout: 30.0

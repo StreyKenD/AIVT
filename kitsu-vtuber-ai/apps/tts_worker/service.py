@@ -431,7 +431,7 @@ def _build_synthesizers(config: TTSSettings) -> List[Synthesizer]:
     return synthesizers
 
 
-class TelemetryPublisher(Protocol):
+class TelemetryClientProtocol(Protocol):
     async def publish(self, event_type: str, payload: Dict[str, object]) -> None:
         """Emit a structured telemetry event."""
 
@@ -441,7 +441,7 @@ class TTSService:
         self,
         *,
         config: TTSSettings,
-        telemetry: Optional[TelemetryPublisher] = None,
+        telemetry: Optional[TelemetryClientProtocol] = None,
         cache_dir: str | Path | None = None,
     ) -> None:
         output_root = cache_dir or config.cache_dir
@@ -637,7 +637,7 @@ _service: Optional[TTSService] = None
 def get_tts_service(
     *,
     config: TTSSettings,
-    telemetry: Optional[TelemetryPublisher] = None,
+    telemetry: Optional[TelemetryClientProtocol] = None,
     cache_dir: str | Path | None = None,
 ) -> TTSService:
     global _service

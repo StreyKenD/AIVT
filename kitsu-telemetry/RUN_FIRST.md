@@ -31,8 +31,8 @@ TELEMETRY_RETENTION_SECONDS=14400
 For the UI, copy `ui/.env.example` to `ui/.env.local`, keeping it aligned with the orchestrator (`kitsu-vtuber-ai`) and the control backend:
 
 ```
-PUBLIC_ORCH_BASE_URL=http://127.0.0.1:8000
-PUBLIC_ORCH_WS_URL=ws://127.0.0.1:8000
+PUBLIC_ORCH_BASE_URL=http://127.0.0.1:9000
+PUBLIC_ORCH_WS_URL=ws://127.0.0.1:9000
 PUBLIC_CONTROL_BASE_URL=http://127.0.0.1:8100
 ```
 

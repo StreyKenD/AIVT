@@ -30,8 +30,8 @@ Telemetry module for the Kitsu.exe ecosystem, composed of a FastAPI service and 
 - `TELEMETRY_API_KEY`: required key for authenticating requests (`X-API-KEY`); leave empty to disable protection (not recommended outside local environments).
 - `TELEMETRY_RETENTION_SECONDS`: automatic retention window. Events older than this value (e.g. `14400` for 4h) are purged after each ingestion.
 - UI (`ui/.env.local`):
-  - `PUBLIC_ORCH_BASE_URL`: orchestrator HTTP endpoint (e.g. `http://127.0.0.1:8000`).
-  - `PUBLIC_ORCH_WS_URL`: WebSocket base (`ws://127.0.0.1:8000`); the app automatically appends `/stream`.
+  - `PUBLIC_ORCH_BASE_URL`: orchestrator HTTP endpoint (e.g. `http://127.0.0.1:9000`).
+  - `PUBLIC_ORCH_WS_URL`: WebSocket base (`ws://127.0.0.1:9000`); the app automatically appends `/stream`.
   - `PUBLIC_CONTROL_BASE_URL`: URL for the control backend (`kitsu-vtuber-ai/apps/control_panel_backend`) that aggregates metrics and commands (defaults to `http://127.0.0.1:8100`).
 
 > Make sure `PUBLIC_ORCH_*` is aligned with `ORCH_HOST`/`ORCH_PORT` defined in the `kitsu-vtuber-ai` repository.
@@ -61,7 +61,7 @@ When you visit `http://localhost:5173`, the dashboard will:
 
 ## Structure
 - `api/`: telemetry API code (FastAPI + SQLite).
-- `ui/`: SvelteKit front-end with Tailwind and a WebSocket mock for prototyping.
+- `ui/`: SvelteKit front-end with Tailwind that consumes the live orchestrator and telemetry streams.
 - `tests/`: smoke tests for endpoints and CSV export.
 
 ## Key endpoints

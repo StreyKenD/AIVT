@@ -526,7 +526,7 @@ def test_load_energy_threshold_handles_non_finite(
     assert _load_energy_threshold() == 300.0
 
 
-def test_run_worker_retries_after_pipeline_cancellation(
+def test_run_worker_propagates_cancellation_and_records_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _scenario() -> None:
@@ -544,9 +544,6 @@ def test_run_worker_retries_after_pipeline_cancellation(
             device_preference="cpu",
             compute_type=None,
         )
-
-        attempts = 0
-        resumed = asyncio.Event()
 
         class _StubOrchestrator:
             def __init__(self, _url: str) -> None:
@@ -618,22 +615,14 @@ def test_run_worker_retries_after_pipeline_cancellation(
                 self._allow_non_english = allow_non_english
 
             async def process(self, frames) -> None:
-                nonlocal attempts
-                attempts += 1
-                if attempts == 1:
-                    raise asyncio.CancelledError()
-                resumed.set()
-                await asyncio.sleep(0)
+                raise asyncio.CancelledError()
 
         monkeypatch.setattr(asr_runner, "SpeechPipeline", _StubPipeline)
 
-        worker_task = asyncio.create_task(asr_runner.run_worker(config))
-        await asyncio.wait_for(resumed.wait(), timeout=2.5)
-        worker_task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await worker_task
-        assert attempts >= 2
-        assert telemetry_records["started"]
-        assert telemetry_records["completed"]
+            await asr_runner.run_worker(config)
+
+        assert telemetry_records["started"] == [(1, "0.0")]
+        assert telemetry_records["completed"] == [(1, "cancelled")]
 
     asyncio.run(_scenario())

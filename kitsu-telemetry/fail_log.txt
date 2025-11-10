@@ -1,0 +1,236 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.11.0, pytest-8.4.2, pluggy-1.6.0 -- F:\code\projects\AIVT\kitsu-telemetry\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: F:\code\projects\AIVT\kitsu-telemetry
+configfile: pyproject.toml
+plugins: anyio-4.11.0, asyncio-0.23.8
+asyncio: mode=Mode.STRICT
+collecting ... collected 1 item
+
+tests/test_api.py::test_event_ingest_batch_filter_and_export FAILED      [100%]
+
+================================== FAILURES ===================================
+__________________ test_event_ingest_batch_filter_and_export __________________
+
+telemetry_db = WindowsPath('C:/Users/vitor/AppData/Local/Temp/pytest-of-vitor/pytest-72/test_event_ingest_batch_filter0/telemetry.db')
+
+    @pytest.mark.asyncio
+    async def test_event_ingest_batch_filter_and_export(telemetry_db):
+        await storage.init_db(db_path=str(telemetry_db))
+        transport = ASGITransport(app=main.app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver", headers=API_HEADERS
+        ) as async_client:
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            single_event = {
+                "type": "emotion",
+                "ts": now.isoformat(),
+                "payload": {"mood": "happy", "intensity": 0.8},
+            }
+    
+            single_response = await async_client.post("/events", json=single_event)
+            assert single_response.status_code == 200
+            assert "id" in single_response.json()
+    
+            batch_payload = [
+                {
+                    "type": "emotion",
+                    "ts": (now + timedelta(seconds=1)).isoformat(),
+                    "payload": {"mood": "excited"},
+                },
+                {
+                    "type": "status",
+                    "ts": (now + timedelta(seconds=2)).isoformat(),
+                    "payload": {"state": "ok"},
+                },
+            ]
+    
+            batch_response = await async_client.post("/events", json=batch_payload)
+            assert batch_response.status_code == 200
+            body = batch_response.json()
+            assert "ids" in body and len(body["ids"]) == 2
+    
+            gpu_event = {
+                "type": "hardware.gpu",
+                "ts": (now + timedelta(seconds=3)).isoformat(),
+                "payload": {
+                    "index": 0,
+                    "name": "Mock GPU",
+                    "temperature_c": 62.0,
+                    "utilization_pct": 70.0,
+                    "memory_used_mb": 4096.0,
+                    "memory_total_mb": 8192.0,
+                    "memory_pct": 50.0,
+                    "fan_speed_pct": 40.0,
+                    "power_w": 150.0,
+                },
+            }
+            gpu_response = await async_client.post("/events", json=gpu_event)
+            assert gpu_response.status_code == 200
+    
+            events_response = await async_client.get(
+                "/events", params={"type": "emotion", "limit": 5}
+            )
+            assert events_response.status_code == 200
+            emotion_items = events_response.json()
+            assert emotion_items
+            assert all(item["type"] == "emotion" for item in emotion_items)
+            assert all("ts" in item and "payload" in item for item in emotion_items)
+    
+            legacy_filter = await async_client.get(
+                "/events", params={"event_type": "status"}
+            )
+            assert legacy_filter.status_code == 200
+            legacy_items = legacy_filter.json()
+            assert legacy_items
+            assert all(item["type"] == "status" for item in legacy_items)
+    
+            export_response = await async_client.get("/events/export")
+            assert export_response.status_code == 200
+            csv_content = (await export_response.aread()).decode("utf-8")
+    
+            reader = csv.reader(csv_content.splitlines())
+            rows = list(reader)
+            assert rows[0] == ["ts", "type", "json_payload"]
+    
+            data_rows = rows[1:]
+            assert len(data_rows) == 4
+    
+            parsed_rows = [
+                {"ts": ts, "type": event_type, "payload": json.loads(payload)}
+                for ts, event_type, payload in data_rows
+            ]
+    
+            def _find_event(event_type: str, **expected_payload: object) -> None:
+                matches = [
+                    row
+                    for row in parsed_rows
+                    if row["type"] == event_type
+                    and all(row["payload"].get(key) == value for key, value in expected_payload.items())
+                ]
+                assert matches, f"missing event {event_type} with payload {expected_payload}"
+    
+            _find_event("emotion", mood="happy", intensity=0.8)
+            _find_event("emotion", mood="excited")
+            _find_event("status", state="ok")
+            _find_event(
+                "hardware.gpu",
+                index=0,
+                name="Mock GPU",
+                temperature_c=62.0,
+                utilization_pct=70.0,
+            )
+    
+>           metrics_response = await async_client.get("/metrics/latest")
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_api.py:154: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\httpx\_client.py:1814: in get
+    return await self.request(
+.venv\Lib\site-packages\httpx\_client.py:1585: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpx\_client.py:1674: in send
+    response = await self._send_handling_auth(
+.venv\Lib\site-packages\httpx\_client.py:1702: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv\Lib\site-packages\httpx\_client.py:1739: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpx\_client.py:1776: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\httpx\_transports\asgi.py:157: in handle_async_request
+    await self.app(scope, receive, send)
+.venv\Lib\site-packages\fastapi\applications.py:1054: in __call__
+    await super().__call__(scope, receive, send)
+.venv\Lib\site-packages\starlette\applications.py:123: in __call__
+    await self.middleware_stack(scope, receive, send)
+.venv\Lib\site-packages\starlette\middleware\errors.py:186: in __call__
+    raise exc
+.venv\Lib\site-packages\starlette\middleware\errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+.venv\Lib\site-packages\starlette\middleware\cors.py:85: in __call__
+    await self.app(scope, receive, send)
+.venv\Lib\site-packages\starlette\middleware\exceptions.py:65: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+.venv\Lib\site-packages\starlette\_exception_handler.py:64: in wrapped_app
+    raise exc
+.venv\Lib\site-packages\starlette\_exception_handler.py:53: in wrapped_app
+    await app(scope, receive, sender)
+.venv\Lib\site-packages\starlette\routing.py:756: in __call__
+    await self.middleware_stack(scope, receive, send)
+.venv\Lib\site-packages\starlette\routing.py:776: in app
+    await route.handle(scope, receive, send)
+.venv\Lib\site-packages\starlette\routing.py:297: in handle
+    await self.app(scope, receive, send)
+.venv\Lib\site-packages\starlette\routing.py:77: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+.venv\Lib\site-packages\starlette\_exception_handler.py:64: in wrapped_app
+    raise exc
+.venv\Lib\site-packages\starlette\_exception_handler.py:53: in wrapped_app
+    await app(scope, receive, sender)
+.venv\Lib\site-packages\starlette\routing.py:72: in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\fastapi\routing.py:278: in app
+    raw_response = await run_endpoint_function(
+.venv\Lib\site-packages\fastapi\routing.py:191: in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+api\main.py:251: in latest_metrics
+    return await storage.latest_metrics(window_seconds=window_seconds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def latest_metrics(
+        *, window_seconds: int = 300, db_path: str | None = None
+    ) -> dict[str, Any]:
+        """Calculate aggregated metrics for the provided sliding window."""
+    
+        window_seconds = max(60, int(window_seconds))
+        cutoff = _utcnow() - timedelta(seconds=window_seconds)
+        database_path = _resolve_db_path(db_path)
+        sql = (
+            "SELECT event_type, payload, COALESCE(created_at, '') "
+            "FROM telemetry_events WHERE created_at >= ? ORDER BY id DESC"
+        )
+        metrics: dict[str, dict[str, Any]] = {}
+        async with aiosqlite.connect(database_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(sql, (cutoff.isoformat(),)) as cursor:
+                async for row in cursor:
+                    event_type = row["event_type"]
+                    raw_payload = row["payload"]
+                    try:
+                        payload = json.loads(raw_payload)
+                    except json.JSONDecodeError:
+                        payload = {}
+                    bucket = metrics.setdefault(event_type, {"count": 0})
+                    bucket["count"] += 1
+                    failures = payload.get("failures")
+                    if isinstance(failures, (int, float)):
+                        bucket["failures"] = bucket.get("failures", 0) + int(failures)
+                    for key, value in payload.items():
+                        if key == "failures":
+                            continue
+                        if any(key.endswith(suffix) for suffix in _NUMERIC_SUFFIXES):
+                            _accumulate_numeric(bucket, key, value)
+        for bucket in metrics.values():
+            for key, value in list(bucket.items()):
+                if not isinstance(value, dict) or "_count" not in value:
+                    continue
+                count = value.pop("_count")
+            if not count:
+                bucket.pop(key)
+                continue
+>           total = value.get("sum", 0.0)
+                    ^^^^^^^^^
+E           AttributeError: 'int' object has no attribute 'get'
+
+api\storage.py:276: AttributeError
+=========================== short test summary info ===========================
+FAILED tests/test_api.py::test_event_ingest_batch_filter_and_export - AttributeError: 'int' object has no attribute 'get'
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+============================== 1 failed in 0.68s ==============================

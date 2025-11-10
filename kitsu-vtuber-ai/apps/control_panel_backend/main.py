@@ -11,9 +11,9 @@ from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from libs.contracts import MuteCommand, PanicCommand, PresetCommand
-
 from libs.common import configure_json_logging
+from libs.config import get_app_config
+from libs.contracts import MuteCommand, PanicCommand, PresetCommand
 from .ollama import OllamaSupervisor, parse_bool
 
 _DEFAULT_ALLOWED_ORIGINS = {
@@ -22,7 +22,12 @@ _DEFAULT_ALLOWED_ORIGINS = {
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 }
-_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_BASE_URL", "http://127.0.0.1:8000")
+try:
+    _DEFAULT_ORCHESTRATOR_URL = get_app_config().orchestrator.base_url
+except Exception:  # pragma: no cover - configuration loading failure
+    _DEFAULT_ORCHESTRATOR_URL = "http://127.0.0.1:9000"
+
+_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_BASE_URL", _DEFAULT_ORCHESTRATOR_URL)
 _TELEMETRY_URL = os.getenv("TELEMETRY_BASE_URL", "http://127.0.0.1:8001")
 _ORCHESTRATOR_TOKEN = os.getenv("ORCHESTRATOR_API_KEY")
 _TELEMETRY_API_KEY = os.getenv("TELEMETRY_API_KEY")

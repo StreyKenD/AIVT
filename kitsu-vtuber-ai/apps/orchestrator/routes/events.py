@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from libs.contracts import ASREventPayload
 
 from ..broker import EventBroker
-from ..deps import get_broker, get_state
+from ..deps import get_broker, get_state, require_orchestrator_token
 from ..state import OrchestratorState
 
 router = APIRouter()
 
 
-@router.post("/events/asr")
+@router.post("/events/asr", dependencies=[Depends(require_orchestrator_token)])
 async def receive_asr_event(
     payload: ASREventPayload,
     orchestrator: OrchestratorState = Depends(get_state),

@@ -16,7 +16,7 @@ Files in this directory describe the telemetry API and UI for the Kitsu.exe proj
 ## Frontend (SvelteKit)
 - UI built with Tailwind CSS.
 - Create accessible components (add `aria-*` attributes when appropriate).
-- The WebSocket mock must allow local testing without a real-time backend.
+- WebSocket clients must connect to the real orchestrator stream—avoid mock-specific code paths.
 
 ## Tests
 - Ensure the test suite runs with `pytest -q` at the repository root.

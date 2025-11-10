@@ -1,5 +1,5 @@
 from .config import ASRConfig, SherpaConfig, load_config
-from .main import main, run_forever
+from .main import main, run_once
 from .pipeline import SimpleASRPipeline
 from .runner import run
 from .transcription import Transcriber, TranscriptionResult, build_transcriber
@@ -20,5 +20,5 @@ __all__ = [
     "load_config",
     "main",
     "run",
-    "run_forever",
+    "run_once",
 ]
