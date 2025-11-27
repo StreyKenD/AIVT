@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, AsyncIterator, Dict, Generator, List
 
+import httpx
 import pytest
 
 pytest.importorskip("fastapi", reason="backend do painel exige FastAPI")
@@ -96,6 +97,40 @@ def test_status_and_metrics(client: TestClient) -> None:
     assert payload["metrics"]["window_seconds"] == 300
     assert payload["ollama"]["backend"] == "ollama"
     assert payload["ollama"]["status"] in {"unmanaged", "unknown", "offline", "online"}
+
+
+def test_status_handles_telemetry_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenGateway(StubGateway):
+        async def telemetry_get(
+            self, path: str, params: Dict[str, Any] | None = None
+        ) -> Any:
+            raise httpx.ConnectError(
+                "boom", request=httpx.Request("GET", "http://telemetry.local/metrics")
+            )
+
+    gateway = BrokenGateway()
+
+    async def _override_gateway() -> BrokenGateway:
+        return gateway
+
+    async def _override_supervisor() -> None:
+        return None
+
+    app = control_backend.app
+    app.dependency_overrides[control_backend.get_gateway] = _override_gateway
+    app.dependency_overrides[control_backend.get_supervisor] = _override_supervisor
+    test_client = TestClient(app)
+    try:
+        response = test_client.get("/status")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"]["status"] == "ok"
+        metrics = payload["metrics"]
+        assert metrics["metrics"] == {}
+        assert metrics["window_seconds"] == 0
+        assert metrics["status"] in {"offline", "error"}
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_control_actions_forward_to_orchestrator(client: TestClient) -> None:

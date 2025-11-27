@@ -10,7 +10,7 @@ from libs.contracts import ASREventPayload
 
 from ..broker import EventBroker
 from ..deps import get_broker, get_state, require_orchestrator_token
-from ..state import OrchestratorState
+from ..state_manager import OrchestratorState
 
 router = APIRouter()
 
@@ -34,6 +34,8 @@ async def receive_asr_event(
         module.last_updated = time.time()
     if event_type == "asr_final":
         asyncio.create_task(orchestrator.handle_asr_final(payload))
+    elif event_type == "asr_partial":
+        asyncio.create_task(orchestrator.handle_asr_partial(payload))
     return {"status": "accepted"}
 
 

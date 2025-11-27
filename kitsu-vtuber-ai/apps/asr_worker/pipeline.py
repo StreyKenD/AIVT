@@ -7,6 +7,7 @@ import time
 from typing import AsyncIterator, Optional
 
 from libs.contracts import ASREventPayload, ASRFinalEvent, ASRPartialEvent
+from libs.monitoring.resource import ResourceMonitor, ResourceBusyError
 
 from .config import ASRConfig
 from .logger import logger
@@ -40,6 +41,7 @@ DEFAULT_ENERGY_THRESHOLD = _load_energy_threshold()  # pragma: no mutate
 
 
 class SimpleASRPipeline:
+    """High-level speech pipeline that buffers audio, applies VAD, and emits ASR events."""
     def __init__(
         self,
         config: ASRConfig,
@@ -52,6 +54,7 @@ class SimpleASRPipeline:
         allow_non_english: bool | None = None,
         orchestrator: OrchestratorPublisher | None = None,
         telemetry: ASRTelemetry | None = None,
+        resource_monitor: ResourceMonitor | None = None,
     ) -> None:
         self._config = config
         self._transcriber = transcriber
@@ -88,6 +91,7 @@ class SimpleASRPipeline:
         self._orchestrator = orchestrator
         self._telemetry = telemetry
         self._vad = vad
+        self._resource_monitor = resource_monitor
 
     async def run(self, frames: AsyncIterator[bytes]) -> None:
         try:
@@ -175,7 +179,14 @@ class SimpleASRPipeline:
             )
             return
         audio = bytes(self._buffer)
-        text, confidence, language = await self._transcribe_async(audio)
+        try:
+            text, confidence, language = await self._transcribe_async(audio)
+        except ResourceBusyError:
+            logger.info("Skipping ASR final segment due to resource pressure")
+            await self._emit_skipped(
+                reason="resource_busy", language=None, text_length=len(audio)
+            )
+            return
         if not text:
             logger.debug("Discarding empty transcription result")
             return
@@ -209,7 +220,11 @@ class SimpleASRPipeline:
 
     async def _emit_partial(self, timestamp: float) -> None:
         audio = bytes(self._buffer)
-        text, confidence, language = await self._transcribe_async(audio)
+        try:
+            text, confidence, language = await self._transcribe_async(audio)
+        except ResourceBusyError:
+            logger.debug("Skipping ASR partial due to resource pressure")
+            return
         if not text:
             return
         if not self._language_allowed(language):
@@ -261,6 +276,10 @@ class SimpleASRPipeline:
     async def _transcribe_async(
         self, audio: bytes
     ) -> tuple[str, Optional[float], Optional[str]]:
+        if self._resource_monitor is not None:
+            await self._resource_monitor.wait_for_capacity(
+                timeout=self._config.resource_busy_timeout_seconds
+            )
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._transcriber.transcribe, audio)
         return result.text, result.confidence, result.language

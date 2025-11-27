@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import Header, HTTPException, status
 
 from .broker import EventBroker
-from .state import OrchestratorState
+from .state_manager import OrchestratorState
 
 _state: Optional[OrchestratorState] = None
 _broker: Optional[EventBroker] = None

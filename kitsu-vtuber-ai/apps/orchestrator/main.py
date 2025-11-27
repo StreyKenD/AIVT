@@ -19,7 +19,7 @@ from libs.telemetry.gpu import GPUMonitor
 from .broker import EventBroker
 from .deps import set_api_key, set_broker, set_state
 from .routes import ALL_ROUTERS
-from .state import OrchestratorState
+from .state_manager import OrchestratorState, PolicyStreamHandler
 from .telemetry import TelemetryDispatcher
 
 
@@ -71,7 +71,9 @@ def _load_persona_presets(config: PersonaSettings) -> Dict[str, PersonaPreset]:
 
 
 async def _invoke_policy(
-    payload: Dict[str, Any], broker: EventBroker
+    payload: Dict[str, Any],
+    broker: EventBroker,
+    stream_handler: Optional[PolicyStreamHandler] = None,
 ) -> Optional[Dict[str, Any]]:
     if _policy_client is None:
         logger.warning("Policy client is not initialised; skipping LLM request")
@@ -98,8 +100,24 @@ async def _invoke_policy(
                     except json.JSONDecodeError:
                         logger.debug("Discarding non-JSON SSE chunk: %s", data_line)
                         continue
+                    if stream_handler is not None and current_event:
+                        try:
+                            await stream_handler(current_event, data)
+                        except Exception:  # pragma: no cover - defensive guard
+                            logger.debug(
+                                "Policy stream handler failed for event %s",
+                                current_event,
+                                exc_info=True,
+                            )
                     if current_event == "token":
                         await broker.publish({"type": "policy.token", "payload": data})
+                    elif current_event == "busy":
+                        meta = data.get("meta")
+                        if not isinstance(meta, dict):
+                            meta = {}
+                        meta = {**meta, "status": "busy"}
+                        final_event = {"content": "", "meta": meta}
+                        break
                     elif current_event == "final":
                         final_event = data
     except Exception:  # pragma: no cover - network guard
@@ -122,6 +140,8 @@ async def _invoke_tts(
         payload["request_id"] = request_id
     try:
         response = await _tts_client.post("/speak", json=payload)
+        if response.status_code == 429:
+            return {"status": "busy"}
         response.raise_for_status()
         return response.json()
     except Exception:  # pragma: no cover - network guard

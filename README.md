@@ -47,6 +47,7 @@ Fill in, at minimum:
 - Set `ASR_FAKE_AUDIO=0` to capture from your microphone (default behaviour). Set it to `1` to keep the worker silent during tests.
 - Optional: set `MIC_TEST_OUTPUT=/path/to/log.txt` to duplicate the mic tester transcript into a log file while keeping console output.
 - Optional: `PIPELINE_DISABLE` (comma-separated services to skip, e.g. `twitch_ingest,avatar_controller`)
+- **Important:** Make sure `config/kitsu.yaml` (under `orchestrator.bind_port` / `public_url`) uses **9000** so it matches the UI defaults (`PUBLIC_ORCH_BASE_URL=http://127.0.0.1:9000`). Older snapshots of the file shipped with port 8000; update it to 9000 and restart the pipeline if you see `ERR_CONNECTION_REFUSED` when opening the dashboard.
 
 Keep everything on `127.0.0.1` unless you truly need remote access.
 
@@ -185,3 +186,18 @@ AIVT/
 ```
 
 For more details, including licensing requirements and the operations playbook, read `kitsu-vtuber-ai/README.md` and `kitsu-vtuber-ai/RUN_FIRST.md`.
+
+---
+
+## 10. Documentação automática
+
+O repositório publica a documentação técnica (arquitetura, endpoints, workers e contratos) via **MkDocs + mkdocstrings**. Para gerar/atualizar:
+
+```bash
+poetry install --with dev
+make docs          # gera e envia para o GitHub Pages
+# ou, durante o desenvolvimento
+poetry run mkdocs serve
+```
+
+Os arquivos vivem em `docs/` e o menu é configurado em `mkdocs.yml`.

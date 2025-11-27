@@ -8,7 +8,7 @@ from libs.contracts import ChatIngestCommand
 
 from ..deps import get_state, require_orchestrator_token
 from ..schemas import ManualChatRequest
-from ..state import OrchestratorState
+from ..state_manager import OrchestratorState
 
 router = APIRouter()
 

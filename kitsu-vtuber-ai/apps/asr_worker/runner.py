@@ -5,6 +5,8 @@ import sys
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from libs.monitoring.resource import ResourceMonitor
+
 from .audio import MicrophoneStream
 from .config import ASRConfig, load_config
 from .logger import logger
@@ -28,6 +30,11 @@ async def run(config: ASRConfig | None = None) -> None:
     config = config or load_config()
     orchestrator = OrchestratorClient(config.orchestrator_url)
     telemetry = create_telemetry()
+    resource_monitor = ResourceMonitor(
+        cpu_threshold=config.resource_cpu_threshold_pct,
+        gpu_threshold=config.resource_gpu_threshold_pct,
+        sample_interval=config.resource_check_interval_seconds,
+    )
     attempt = 1
     try:
         transcriber = build_transcriber(config)
@@ -47,6 +54,7 @@ async def run(config: ASRConfig | None = None) -> None:
             orchestrator=orchestrator,
             telemetry=telemetry,
             allow_non_english=config.allow_non_english,
+            resource_monitor=resource_monitor,
         )
 
         logger.info(
@@ -82,6 +90,7 @@ async def run(config: ASRConfig | None = None) -> None:
             await telemetry.cycle_completed(attempt, "stream_end")
             raise RuntimeError("ASR audio stream ended unexpectedly")
     finally:
+        resource_monitor.shutdown()
         await telemetry.aclose()
         await orchestrator.aclose()
 

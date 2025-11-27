@@ -2,8 +2,8 @@ version: 1
 
 orchestrator:
   bind_host: 0.0.0.0
-  bind_port: 8000
-  public_url: http://127.0.0.1:8000
+  bind_port: 9000
+  public_url: http://127.0.0.1:9000
   policy_timeout_seconds: 40.0
   tts_timeout_seconds: 60.0
   telemetry_url: http://127.0.0.1:8001

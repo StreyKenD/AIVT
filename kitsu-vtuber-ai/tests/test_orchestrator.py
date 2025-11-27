@@ -314,7 +314,9 @@ def test_chat_pipeline_hits_policy_and_tts(
     module = load_orchestrator(monkeypatch, tmp_path)
 
     async def fake_invoke_policy(
-        payload: dict[str, Any], broker: Any
+        payload: dict[str, Any],
+        broker: Any,
+        stream_handler: Optional[Any] = None,
     ) -> dict[str, Any]:
         await broker.publish({"type": "policy.token", "payload": {"token": "Hello"}})
         return {
@@ -354,7 +356,11 @@ def test_chat_respond_returns_202_when_policy_missing(
 ) -> None:
     module = load_orchestrator(monkeypatch, tmp_path)
 
-    async def missing_policy(payload: dict[str, Any], broker: Any) -> None:
+    async def missing_policy(
+        payload: dict[str, Any],
+        broker: Any,
+        stream_handler: Optional[Any] = None,
+    ) -> None:
         return None
 
     async def unexpected_tts(*args: Any, **kwargs: Any) -> None:
@@ -380,7 +386,11 @@ def test_chat_respond_handles_missing_tts(
 ) -> None:
     module = load_orchestrator(monkeypatch, tmp_path)
 
-    async def fake_policy(payload: dict[str, Any], broker: Any) -> dict[str, Any]:
+    async def fake_policy(
+        payload: dict[str, Any],
+        broker: Any,
+        stream_handler: Optional[Any] = None,
+    ) -> dict[str, Any]:
         return {
             "content": "<speech>Hello!</speech>",
             "request_id": "req-456",

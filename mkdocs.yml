@@ -1,0 +1,27 @@
+site_name: Kitsu.exe Documentation
+theme:
+  name: material
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            docstring_style: google
+            separate_signature: true
+          setup_commands:
+            - import sys
+            - sys.path.append("kitsu-vtuber-ai")
+nav:
+  - Home: index.md
+  - Arquitetura:
+      - Visão Geral: architecture.md
+  - Endpoints API:
+      - Orchestrator: endpoints.md
+  - Workers:
+      - Orchestrator: workers/orchestrator.md
+      - ASR: workers/asr.md
+      - TTS: workers/tts.md
+      - Policy: workers/policy.md
+  - Contratos e Schemas: contracts.md

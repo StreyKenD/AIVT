@@ -1,17 +1,21 @@
+"""High-level state manager for the orchestrator service.
+
+This module tracks persona/module state, coordinates background tasks, and
+delegates decision making to :mod:`apps.orchestrator.decision_engine` while
+using :mod:`apps.orchestrator.event_dispatcher` to broadcast events.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 import random
-import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from libs.config import PersonaPreset
 from libs.contracts import (
-    ASRFinalEvent,
     ASREventPayload,
     PersonaUpdateCommand,
     TTSRequestPayload,
@@ -20,13 +24,15 @@ from libs.contracts import (
 from libs.memory import MemoryController, MemorySummary
 
 from .broker import EventBroker
+from .decision_engine import DecisionEngine
+from .event_dispatcher import EventDispatcher
 
 logger = logging.getLogger(__name__)
 
-_SPEECH_PATTERN = re.compile(r"<speech>(.*?)</speech>", re.IGNORECASE | re.DOTALL)
-
+PolicyStreamHandler = Callable[[str, Dict[str, Any]], Awaitable[None]]
 PolicyInvoker = Callable[
-    [Dict[str, Any], EventBroker], Awaitable[Optional[Dict[str, Any]]]
+    [Dict[str, Any], EventBroker, Optional[PolicyStreamHandler]],
+    Awaitable[Optional[Dict[str, Any]]],
 ]
 TTSInvoker = Callable[
     [str, Optional[str], Optional[str]], Awaitable[Optional[Dict[str, Any]]]
@@ -160,17 +166,23 @@ class OrchestratorState:
         self.last_expression: Dict[str, Any] = {"expression": "smile", "intensity": 0.5}
         self.last_tts_request: Optional[Dict[str, Any]] = None
         self._broker = broker
+        self._dispatcher = EventDispatcher(broker)
         self.memory = memory
         self._tasks: List[asyncio.Task[Any]] = []
         self._lock = asyncio.Lock()
         self.restore_context = False
+        self._started_at = time.time()
         self.last_summary: Optional[MemorySummary] = None
         self.tts_muted = False
         self.panic_triggered_at: Optional[float] = None
         self.panic_reason: Optional[str] = None
         self.active_preset = default_preset
-        self._policy_invoker = policy_invoker
-        self._tts_invoker = tts_invoker
+        self._decision_engine = DecisionEngine(
+            self,
+            self._dispatcher,
+            policy_invoker,
+            tts_invoker,
+        )
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -201,7 +213,7 @@ class OrchestratorState:
         summary = await self.memory.prepare(restore, restore_window)
         self.last_summary = summary
         if summary:
-            await self._broker.publish(
+            await self._dispatcher.publish(
                 {"type": "memory_summary", "summary": summary.to_dict()}
             )
 
@@ -219,7 +231,7 @@ class OrchestratorState:
                 "enabled": enabled,
                 "state": module_state.health,
             }
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
 
     def _resolve_preset(self, name: str) -> PersonaPreset:
@@ -233,9 +245,8 @@ class OrchestratorState:
         self,
         payload: PersonaUpdateCommand,
         *,
-        preset_name: Optional[str],
-        announce: bool = True,
-        log_turn: bool = True,
+        preset_name: Optional[str] = None,
+        announce: bool = False,
     ) -> Dict[str, Any]:
         async with self._lock:
             self.persona.update(
@@ -244,180 +255,49 @@ class OrchestratorState:
                 energy=payload.energy,
                 family_mode=payload.family_mode,
             )
-            if preset_name is not None:
+            if preset_name:
                 self.active_preset = preset_name
-            elif any(
-                value is not None
-                for value in (
-                    payload.style,
-                    payload.chaos_level,
-                    payload.energy,
-                    payload.family_mode,
-                )
-            ):
+            elif payload.style or payload.chaos_level or payload.energy:
                 self.active_preset = "custom"
-            self.persona.last_updated = time.time()
-            body = {
-                "type": "persona_update",
-                "ts": self.persona.last_updated,
-                "persona": self.persona.snapshot(),
-                "preset": self.active_preset,
+            snapshot = {
                 "active_preset": self.active_preset,
+                "persona": self.persona.snapshot(),
             }
-        await self._broker.publish(body)
-        if announce:
-            await self.record_turn(
-                "system",
-                f"Persona updated to {self.active_preset} preset.",
-            )
-        if log_turn and payload.system_message:
-            await self.record_turn("system", payload.system_message)
-        return body
+            if announce:
+                event = {
+                    "type": "persona_update",
+                    "persona": self.persona.snapshot(),
+                }
+            else:
+                event = None
+        if event:
+            await self._dispatcher.publish(event)
+        return snapshot
 
     async def update_persona(self, payload: PersonaUpdateCommand) -> Dict[str, Any]:
-        if payload.preset:
-            return await self.apply_preset(payload.preset)
-        return await self._apply_persona_update(payload, preset_name=None)
+        return await self._apply_persona_update(payload, announce=True)
 
-    async def record_tts(self, request: TTSRequestPayload) -> Dict[str, Any]:
-        async with self._lock:
-            self.last_tts_request = {
-                "text": request.text,
-                "voice": request.voice,
-                "ts": time.time(),
-            }
-            payload: Dict[str, Any] = {
-                "type": "tts_request",
-                "data": self.last_tts_request,
-            }
-        await self._broker.publish(payload)
-        summary_payload = await self.record_turn("assistant", request.text)
-        payload["summary_generated"] = summary_payload is not None
-        return payload
-
-    def _mark_module_latency(
-        self, module: str, latency_ms: float, *, health: Optional[str] = None
-    ) -> None:
-        state = self.modules.get(module)
-        if state is None:
-            return
-        state.update_latency(latency_ms, health=health)
-
-    def _set_module_health(self, module: str, health: str) -> None:
-        state = self.modules.get(module)
-        if state is None:
-            return
-        state.mark_health(health)
+    async def handle_asr_partial(self, event: ASREventPayload) -> None:
+        """Handle `asr_partial` events forwarded by the orchestrator route."""
+        await self._decision_engine.handle_asr_partial(event)
 
     async def handle_asr_final(self, event: ASREventPayload) -> None:
-        if event.type != "asr_final":
-            return
-        final_event = cast(ASRFinalEvent, event)
-        text = final_event.text.strip()
-        if not text:
-            return
-        try:
-            await self._process_asr_final(text, final_event)
-        except Exception:  # pragma: no cover - defensive guard
-            logger.exception("Failed to process ASR final event")
-
-    async def _process_asr_final(self, text: str, _event: ASRFinalEvent) -> None:
-        await self.record_turn("user", text)
-        await self._run_policy_pipeline(text, synthesize=not self.tts_muted)
+        """Handle final ASR segments and trigger the policy pipeline."""
+        await self._decision_engine.handle_asr_final(event)
 
     async def process_manual_prompt(
         self, text: str, *, synthesize: bool = True
     ) -> Optional[Dict[str, Any]]:
-        clean = text.strip()
-        if not clean:
-            return None
-        await self.record_turn("user", clean)
-        return await self._run_policy_pipeline(clean, synthesize=synthesize)
-
-    async def _run_policy_pipeline(
-        self, text: str, *, synthesize: bool = True
-    ) -> Optional[Dict[str, Any]]:
-        request_body = self._build_policy_request(text)
-        start = time.perf_counter()
-        final_payload = await self._policy_invoker(request_body, self._broker)
-        latency_ms = (time.perf_counter() - start) * 1000
-        if final_payload is None:
-            self._mark_module_latency("policy_worker", latency_ms, health="offline")
-            logger.warning("Policy worker returned no final payload for request")
-            return None
-        status_meta = None
-        if isinstance(final_payload, dict):
-            meta = final_payload.get("meta")
-            if isinstance(meta, dict):
-                status_meta = meta.get("status")
-        if isinstance(status_meta, str) and status_meta.lower() == "error":
-            self._mark_module_latency("policy_worker", latency_ms, health="offline")
-        else:
-            self._mark_module_latency("policy_worker", latency_ms, health="online")
-
-        await self._broker.publish({"type": "policy_final", "payload": final_payload})
-
-        speech_content = _extract_speech(final_payload.get("content", ""))
-        if not speech_content:
-            speech_content = (final_payload.get("content") or "").strip()
-        if not speech_content:
-            return final_payload
-
-        if not synthesize or self.tts_muted:
-            await self.record_turn("assistant", speech_content)
-            return final_payload
-
-        tts_start = time.perf_counter()
-        tts_result = await self._tts_invoker(
-            speech_content,
-            final_payload.get("meta", {}).get("voice"),
-            final_payload.get("request_id"),
+        """Inject a manual chat turn (used by /chat/respond)."""
+        return await self._decision_engine.process_manual_prompt(
+            text, synthesize=synthesize
         )
-        tts_latency_ms = (time.perf_counter() - tts_start) * 1000
-        if tts_result is not None:
-            self._mark_module_latency("tts_worker", tts_latency_ms, health="online")
-            await self._broker.publish({"type": "tts_generated", "payload": tts_result})
-        else:
-            self._mark_module_latency("tts_worker", tts_latency_ms, health="offline")
-        voice_hint = None
-        if isinstance(tts_result, dict):
-            voice_hint = tts_result.get("voice")
-        await self.record_tts(
-            TTSRequestPayload(
-                text=speech_content,
-                voice=voice_hint,
-                request_id=final_payload.get("request_id"),
-            )
-        )
-        return final_payload
-
-    def _build_policy_request(self, text: str) -> Dict[str, Any]:
-        persona = self.persona.snapshot()
-        payload: Dict[str, Any] = {
-            "text": text,
-            "persona_style": persona["style"],
-            "chaos_level": persona["chaos_level"],
-            "energy": persona["energy"],
-            "family_friendly": persona["family_mode"],
-        }
-        persona_prompt = self._persona_prompts.get(self.active_preset)
-        if persona_prompt:
-            payload["persona_prompt"] = persona_prompt
-        if self.last_summary:
-            payload["memory_summary"] = self.last_summary.summary_text
-        recent_turns = [
-            {"role": turn.role, "content": turn.text}
-            for turn in self.memory.buffer.as_list()[-6:]
-        ]
-        if recent_turns:
-            payload["recent_turns"] = recent_turns
-        return payload
 
     async def update_scene(self, scene: str) -> Dict[str, Any]:
         async with self._lock:
             self.current_scene = scene
             payload = {"type": "obs_scene", "scene": scene, "ts": time.time()}
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
 
     async def update_expression(
@@ -430,7 +310,7 @@ class OrchestratorState:
                 "ts": time.time(),
             }
             payload = {"type": "vts_expression", "data": self.last_expression}
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
 
     async def record_turn(self, role: str, text: str) -> Optional[Dict[str, Any]]:
@@ -439,7 +319,7 @@ class OrchestratorState:
             return None
         self.last_summary = summary
         payload = {"type": "memory_summary", "summary": summary.to_dict()}
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
 
     async def trigger_panic(self, reason: Optional[str]) -> Dict[str, Any]:
@@ -452,7 +332,7 @@ class OrchestratorState:
             }
             if self.panic_reason:
                 payload["reason"] = self.panic_reason
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
 
     async def set_mute(self, muted: bool) -> Dict[str, Any]:
@@ -463,7 +343,7 @@ class OrchestratorState:
                 "muted": muted,
                 "ts": time.time(),
             }
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         await self.toggle_module("tts_worker", enabled=not muted)
         return payload
 
@@ -484,8 +364,75 @@ class OrchestratorState:
             "active_preset": preset,
             "ts": time.time(),
         }
-        await self._broker.publish(payload)
+        await self._dispatcher.publish(payload)
         return payload
+
+    async def record_tts(self, request: TTSRequestPayload) -> Dict[str, Any]:
+        async with self._lock:
+            self.last_tts_request = {
+                "text": request.text,
+                "voice": request.voice,
+                "ts": time.time(),
+            }
+            payload: Dict[str, Any] = {
+                "type": "tts_request",
+                "data": self.last_tts_request,
+            }
+        await self._dispatcher.publish(payload)
+        summary_payload = await self.record_turn("assistant", request.text)
+        payload["summary_generated"] = summary_payload is not None
+        return payload
+
+    def uptime_seconds(self) -> float:
+        return max(0.0, time.time() - self._started_at)
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        """Return a lightweight view of module health for /health."""
+        modules = {name: module.health for name, module in self.modules.items()}
+        status = "online"
+        if any(state == "offline" for state in modules.values()):
+            status = "offline"
+        elif any(state == "degraded" for state in modules.values()):
+            status = "degraded"
+        snapshot = {
+            "status": status,
+            "uptime_seconds": round(self.uptime_seconds(), 2),
+            "modules": modules,
+            "tts_muted": self.tts_muted,
+            "panic_reason": self.panic_reason,
+            "panic_active": self.panic_reason is not None,
+        }
+        return snapshot
+
+    def _mark_module_latency(
+        self, module: str, latency_ms: float, *, health: Optional[str] = None
+    ) -> None:
+        state = self.modules.get(module)
+        if state is None:
+            return
+        state.update_latency(latency_ms, health=health)
+
+    def _set_module_health(self, module: str, health: str) -> None:
+        state = self.modules.get(module)
+        if state is None:
+            return
+        state.mark_health(health)
+
+    @property
+    def _policy_invoker(self) -> PolicyInvoker:
+        return self._decision_engine.policy_invoker
+
+    @_policy_invoker.setter
+    def _policy_invoker(self, invoker: PolicyInvoker) -> None:
+        self._decision_engine.update_policy_invoker(invoker)
+
+    @property
+    def _tts_invoker(self) -> TTSInvoker:
+        return self._decision_engine.tts_invoker
+
+    @_tts_invoker.setter
+    def _tts_invoker(self, invoker: TTSInvoker) -> None:
+        self._decision_engine.update_tts_invoker(invoker)
 
     def start_background_tasks(self) -> None:
         self._tasks.append(asyncio.create_task(self._simulate_latency()))
@@ -505,24 +452,15 @@ class OrchestratorState:
             async with self._lock:
                 for module in self.modules.values():
                     module.jitter()
-                snapshot = {"type": "status", "payload": self.snapshot()}
-            await self._broker.publish(snapshot)
-
-
-def _extract_speech(content: Optional[str]) -> str:
-    if not content:
-        return ""
-    match = _SPEECH_PATTERN.search(content)
-    if not match:
-        return ""
-    value = html.unescape(match.group(1))
-    return value.strip()
+                snapshot = self.snapshot()
+            await self._dispatcher.publish_status(snapshot)
 
 
 __all__ = [
     "ModuleState",
     "OrchestratorState",
     "PersonaState",
+    "PolicyStreamHandler",
     "PolicyInvoker",
     "TTSInvoker",
 ]

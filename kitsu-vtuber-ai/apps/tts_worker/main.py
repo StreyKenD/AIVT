@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from libs.common import configure_json_logging
 from libs.config import get_app_config
 from libs.contracts import TTSRequestPayload, TTSResponsePayload
+from libs.monitoring.resource import ResourceBusyError
 from libs.telemetry import TelemetryClient
 
 from .service import TTSResult, TTSService, get_tts_service
@@ -39,6 +40,7 @@ _telemetry_client = (
 
 @app.on_event("startup")
 async def startup() -> None:
+    """Initialise the TTS queue worker and shared service instance."""
     global _service, _worker_task
     if _service is not None:
         return
@@ -50,6 +52,7 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    """Dispose background tasks and reset the singleton service reference."""
     global _service, _worker_task
     if _worker_task is not None:
         _worker_task.cancel()
@@ -59,6 +62,7 @@ async def shutdown() -> None:
     if _service is not None:
         with contextlib.suppress(Exception):
             await _service.cancel_active()
+        _service.shutdown()
         _service = None
 
 
@@ -69,13 +73,17 @@ async def health() -> Dict[str, str]:
 
 @app.post("/speak", response_model=TTSResponsePayload)
 async def speak(request: TTSRequestPayload) -> TTSResponsePayload:
+    """Synthesize speech for the provided text, returning a cached response when possible."""
     if _service is None:
         raise HTTPException(status_code=503, detail="TTS service unavailable")
-    result: TTSResult = await _service.enqueue(
-        request.text,
-        voice=request.voice,
-        request_id=request.request_id,
-    )
+    try:
+        result: TTSResult = await _service.enqueue(
+            request.text,
+            voice=request.voice,
+            request_id=request.request_id,
+        )
+    except ResourceBusyError:
+        raise HTTPException(status_code=429, detail="tts_busy") from None
     return TTSResponsePayload(
         audio_path=str(result.audio_path),
         voice=result.voice,

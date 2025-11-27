@@ -9,6 +9,10 @@ class PolicyRequestPayload(BaseModel):
     """Payload posted to the policy/LLM worker."""
 
     text: str = Field(..., min_length=1, description="User utterance to respond to.")
+    is_final: bool = Field(
+        True,
+        description="Indicates whether this transcript is final (True) or a streaming partial (False).",
+    )
     persona_style: str = Field("kawaii", description="Current persona style.")
     chaos_level: float = Field(0.35, ge=0.0, le=1.0)
     energy: float = Field(0.65, ge=0.0, le=1.0)

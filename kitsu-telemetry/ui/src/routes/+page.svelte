@@ -8,6 +8,7 @@
     fetchLatestMetrics,
     fetchSoakResults,
     fetchControlStatus,
+    fetchHealthStatus,
     getOrchestratorStatus,
     fetchLogs,
     getLlmStatus,
@@ -26,6 +27,7 @@
     type LogQuery,
     type MemorySummary,
     type ModuleStatus,
+    type HealthSnapshot,
     type OrchestratorStatus,
     type PersonaSnapshot,
     type SoakResult,
@@ -251,6 +253,9 @@
   let presetPending: string | null = null;
   let csvPending = false;
   let controlBackendAvailable = true;
+  let healthStatus: HealthSnapshot | null = null;
+  let healthError = '';
+  let healthLoading = true;
   let orchestratorFallbackAttempted = false;
   let llmStatus: LlmStatus | null = null;
   let llmPending = false;
@@ -277,6 +282,7 @@
   let soakTimer: ReturnType<typeof setInterval> | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
   let logsTimer: ReturnType<typeof setInterval> | null = null;
+  let healthTimer: ReturnType<typeof setInterval> | null = null;
   let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
   let componentDestroyed = false;
   let pollingPaused = false;
@@ -293,6 +299,7 @@
     logServiceFilter !== 'all' ||
     trimmedLogSearchTerm.length > 0 ||
     logSinceValue !== 'all';
+  $: healthModuleEntries = healthStatus ? Object.entries(healthStatus.modules ?? {}) : [];
 
   onMount(() => {
     componentDestroyed = false;
@@ -311,6 +318,7 @@
     void fetchStatus(true);
     void refreshMetrics(true);
     void refreshSoak(true);
+    void refreshHealth(true);
     resumePolling();
 
     return () => {
@@ -655,6 +663,42 @@
     }, FEEDBACK_TIMEOUT_MS);
   }
 
+  async function refreshHealth(force = false) {
+    if (componentDestroyed && !force) return;
+    try {
+      const snapshot = await fetchHealthStatus();
+      healthStatus = snapshot;
+      healthError = '';
+    } catch (error) {
+      healthError = getErrorMessage(error, 'Unable to load health data');
+    } finally {
+      healthLoading = false;
+    }
+  }
+
+  function formatUptime(seconds: number | null | undefined): string {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
+      return 'n/a';
+    }
+    const total = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const parts: string[] = [];
+    if (hours) parts.push(`${hours}h`);
+    if (minutes) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    return parts.join(' ');
+  }
+
+  function moduleStatusVariant(status: string | undefined): StatusVariant {
+    const normalized = (status ?? '').toLowerCase();
+    if (normalized === 'online') return 'online';
+    if (normalized === 'degraded') return 'degraded';
+    if (normalized === 'offline') return 'offline';
+    return 'unknown';
+  }
+
   function handleTelemetry(message: TelemetryMessage | null) {
     if (!message || componentDestroyed) return;
 
@@ -739,8 +783,11 @@
         };
         break;
       }
-      case 'control.preset': {
-        const presetName = (message as { preset?: string }).preset ?? controlState.active_preset;
+      case 'control.preset':
+      case 'control_preset': {
+        const presetPayload = message as { preset?: string; active_preset?: string };
+        const presetName =
+          presetPayload.active_preset ?? presetPayload.preset ?? controlState.active_preset;
         controlState = { ...controlState, active_preset: presetName };
         break;
       }
@@ -756,15 +803,6 @@
           file: 'stream'
         };
         appendLogEntry(entry);
-        break;
-      }
-      case 'expression': {
-        const synthetic: ExpressionSnapshot = {
-          expression: message.data.expression,
-          intensity: orchestrator.last_expression?.intensity ?? 0.5,
-          ts: Date.now() / 1000
-        };
-        orchestrator = { ...orchestrator, last_expression: cloneExpression(synthetic) };
         break;
       }
       default:
@@ -896,6 +934,10 @@
       clearInterval(statusTimer);
       statusTimer = null;
     }
+    if (healthTimer) {
+      clearInterval(healthTimer);
+      healthTimer = null;
+    }
   }
 
   function resumePolling(runImmediately = false) {
@@ -915,15 +957,22 @@
     if (statusTimer) {
       clearInterval(statusTimer);
     }
+    if (healthTimer) {
+      clearInterval(healthTimer);
+    }
     metricsTimer = setInterval(() => void refreshMetrics(false), METRIC_POLL_INTERVAL_MS);
     soakTimer = setInterval(() => void refreshSoak(false), SOAK_POLL_INTERVAL_MS);
     statusTimer = setInterval(() => {
       void fetchStatus(false);
     }, STATUS_POLL_INTERVAL_MS);
+    healthTimer = setInterval(() => {
+      void refreshHealth();
+    }, STATUS_POLL_INTERVAL_MS);
     if (runImmediately) {
       void refreshMetrics(false);
       void refreshSoak(false);
       void fetchStatus(false);
+      void refreshHealth();
     }
   }
 
@@ -1510,6 +1559,49 @@ async function refreshSoak(initial = false) {
           class="space-y-6"
           class:hidden={activeTab !== 'overview'}
         >
+          <section class="rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow" aria-label="System health">
+            {#if healthLoading}
+              <p class="text-sm text-slate-400">Loading health status…</p>
+            {:else if healthError}
+              <p class="text-sm text-rose-300">{healthError}</p>
+            {:else if healthStatus}
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.2em] text-slate-400">Orchestrator health</p>
+                  <p class="text-lg font-semibold text-slate-100">
+                    Uptime {formatUptime(healthStatus.uptime_seconds)}
+                  </p>
+                </div>
+                <StatusBadge
+                  status={moduleStatusVariant(healthStatus.status)}
+                  label={healthStatus.status.toUpperCase()}
+                />
+              </div>
+              <div class="mt-4 flex flex-wrap gap-2">
+                {#each healthModuleEntries as [name, state]}
+                  <StatusBadge
+                    tone="soft"
+                    status={moduleStatusVariant(state)}
+                    label={`${name}: ${state}`}
+                  />
+                {/each}
+              </div>
+              <div class="mt-4 flex flex-wrap gap-2 text-[11px]">
+                {#if healthStatus.panic_active}
+                  <span class="rounded-full bg-rose-500/15 px-3 py-1 font-semibold text-rose-100">
+                    Panic: {healthStatus.panic_reason ?? 'active'}
+                  </span>
+                {/if}
+                {#if healthStatus.tts_muted}
+                  <span class="rounded-full bg-amber-500/20 px-3 py-1 font-semibold text-amber-100">
+                    TTS muted
+                  </span>
+                {/if}
+              </div>
+            {:else}
+              <p class="text-sm text-slate-400">No health data available.</p>
+            {/if}
+          </section>
           <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-6" aria-label="Quick summary">
         <div class="rounded-xl border border-white/10 bg-slate-900/60 p-4 shadow">
           <h2 class="text-xs uppercase text-slate-400">Persona</h2>
