@@ -235,24 +235,36 @@ class TelemetrySocketManager {
   }
 
   private consumeChunk(chunk: string): void {
-    this.buffer += chunk;
-    const pieces = this.buffer.split('\n');
+    const pending = this.buffer + chunk;
+    const pieces = pending.split('\n');
     this.buffer = pieces.pop() ?? '';
 
     for (const piece of pieces) {
-      const trimmed = piece.trim();
-      if (!trimmed) continue;
+      this.tryParsePayload(piece);
+    }
 
-      try {
-        const payload = JSON.parse(trimmed);
-        if (isTelemetryMessage(payload)) {
-          this.listener(payload);
-        } else {
-          console.warn('[telemetry] ignored unknown payload', payload);
-        }
-      } catch (error) {
+    if (this.buffer && this.tryParsePayload(this.buffer, true)) {
+      this.buffer = '';
+    }
+  }
+
+  private tryParsePayload(raw: string, deferOnError = false): boolean {
+    const trimmed = raw.trim();
+    if (!trimmed) return true;
+
+    try {
+      const payload = JSON.parse(trimmed);
+      if (isTelemetryMessage(payload)) {
+        this.listener(payload);
+      } else {
+        console.warn('[telemetry] ignored unknown payload', payload);
+      }
+      return true;
+    } catch (error) {
+      if (!deferOnError) {
         console.warn('[telemetry] failed to parse payload', error);
       }
+      return false;
     }
   }
 }
