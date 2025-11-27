@@ -27,7 +27,12 @@ try:
 except Exception:  # pragma: no cover - configuration loading failure
     _DEFAULT_ORCHESTRATOR_URL = "http://127.0.0.1:9000"
 
-_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_BASE_URL", _DEFAULT_ORCHESTRATOR_URL)
+_PUBLIC_ORCH_BASE_URL = os.getenv("PUBLIC_ORCH_BASE_URL")
+_ORCHESTRATOR_URL = (
+    os.getenv("ORCHESTRATOR_BASE_URL")
+    or _PUBLIC_ORCH_BASE_URL
+    or _DEFAULT_ORCHESTRATOR_URL
+)
 _TELEMETRY_URL = os.getenv("TELEMETRY_BASE_URL", "http://127.0.0.1:8001")
 _ORCHESTRATOR_TOKEN = os.getenv("ORCHESTRATOR_API_KEY")
 _TELEMETRY_API_KEY = os.getenv("TELEMETRY_API_KEY")
@@ -125,6 +130,50 @@ def _build_telemetry_headers() -> Dict[str, str]:
     return headers
 
 
+def _fallback_metrics_snapshot(
+    status: str, detail: Optional[str] = None
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "status": status,
+        "window_seconds": 0,
+        "metrics": {},
+    }
+    if detail:
+        payload["detail"] = detail
+    return payload
+
+
+async def _fetch_metrics_snapshot(gateway: ControlPanelGateway) -> Dict[str, Any]:
+    try:
+        metrics = await gateway.telemetry_get("/metrics/latest")
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        logger.warning(
+            "Telemetry API returned %s for /metrics/latest: %s",
+            exc.status_code,
+            detail,
+        )
+        return _fallback_metrics_snapshot("error", detail)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Telemetry API unreachable for /metrics/latest: %s",
+            exc,
+        )
+        return _fallback_metrics_snapshot("offline", str(exc))
+    except Exception:
+        logger.exception("Unexpected telemetry failure")
+        return _fallback_metrics_snapshot("error", "Unexpected telemetry failure")
+    if not isinstance(metrics, dict):
+        logger.warning(
+            "Telemetry API returned invalid payload type %s for /metrics/latest",
+            type(metrics).__name__,
+        )
+        return _fallback_metrics_snapshot(
+            "invalid_payload", "Telemetry payload malformed"
+        )
+    return metrics
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gateway = ControlPanelGateway(_ORCHESTRATOR_URL, _TELEMETRY_URL)
@@ -160,6 +209,7 @@ app = FastAPI(title="Kitsu Control Panel Backend", version="0.2.0", lifespan=lif
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_load_allowed_origins(),
+    allow_origin_regex=r"https?://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -195,7 +245,7 @@ async def status(
     supervisor: Optional[OllamaSupervisor] = Depends(get_supervisor),
 ) -> Dict[str, Any]:
     orchestrator = await gateway.orchestrator_get("/status")
-    metrics = await gateway.telemetry_get("/metrics/latest")
+    metrics = await _fetch_metrics_snapshot(gateway)
     if supervisor is not None:
         ollama = await supervisor.status()
     else:

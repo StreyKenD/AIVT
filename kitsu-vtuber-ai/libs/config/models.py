@@ -124,6 +124,13 @@ class PolicySettings(BaseModel):
     ollama_url: str = "http://localhost:11434"
     openai: OpenAISettings = Field(default_factory=lambda: OpenAISettings())
     local: LocalLLMSettings = Field(default_factory=lambda: LocalLLMSettings())
+    memory_cache_max_entries: int = Field(128, ge=1)
+    memory_cache_ttl_seconds: float = Field(300.0, ge=1.0)
+    resource_cpu_threshold_pct: float = Field(85.0, ge=0.0, le=100.0)
+    resource_gpu_threshold_pct: float = Field(95.0, ge=0.0, le=100.0)
+    resource_check_interval_seconds: float = Field(1.0, ge=0.1)
+    resource_busy_timeout_seconds: float = Field(0.0, ge=0.0)
+    resource_busy_timeout_seconds: float = Field(2.0, ge=0.0)
 
     @computed_field(return_type=str)
     def url(self) -> str:
@@ -209,6 +216,12 @@ class TTSSettings(BaseModel):
     piper: PiperTTSSettings = Field(default_factory=lambda: PiperTTSSettings())
     bark: BarkTTSSettings = Field(default_factory=lambda: BarkTTSSettings())
     xtts: XTTSSettings = Field(default_factory=lambda: XTTSSettings())
+    memory_cache_max_entries: int = Field(128, ge=1)
+    memory_cache_ttl_seconds: float = Field(300.0, ge=1.0)
+    resource_cpu_threshold_pct: float = Field(85.0, ge=0.0, le=100.0)
+    resource_gpu_threshold_pct: float = Field(95.0, ge=0.0, le=100.0)
+    resource_check_interval_seconds: float = Field(1.0, ge=0.1)
+    resource_busy_timeout_seconds: float = Field(2.0, ge=0.0)
 
     @computed_field(return_type=str)
     def url(self) -> str:
@@ -264,6 +277,9 @@ class ASRSettings(BaseModel):
     allow_non_english: bool = False
     backend: str = "whisper"
     sherpa: SherpaSettings = Field(default_factory=lambda: SherpaSettings())
+    resource_cpu_threshold_pct: float = Field(85.0, ge=0.0, le=100.0)
+    resource_gpu_threshold_pct: float = Field(95.0, ge=0.0, le=100.0)
+    resource_check_interval_seconds: float = Field(1.0, ge=0.1)
 
     @field_validator("vad_mode", mode="before")
     @classmethod

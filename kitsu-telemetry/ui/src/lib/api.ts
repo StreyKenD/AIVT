@@ -71,6 +71,15 @@ export type ControlSnapshot = {
   active_preset: string;
 };
 
+export type HealthSnapshot = {
+  status: string;
+  uptime_seconds: number;
+  modules: Record<string, string>;
+  panic_reason: string | null;
+  panic_active: boolean;
+  tts_muted: boolean;
+};
+
 export type ExpressionSnapshot = {
   expression: string;
   intensity: number;
@@ -178,6 +187,10 @@ export async function fetchControlStatus(): Promise<ControlStatusResponse> {
 
 export async function getOrchestratorStatus(): Promise<OrchestratorStatus> {
   return apiRequest<OrchestratorStatus>('/status');
+}
+
+export async function fetchHealthStatus(): Promise<HealthSnapshot> {
+  return apiRequest<HealthSnapshot>('/health');
 }
 
 export type LogQuery = {

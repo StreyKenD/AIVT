@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from libs.contracts import MuteCommand, PanicCommand, PresetCommand
 
 from ..deps import get_state, require_orchestrator_token
-from ..state import OrchestratorState
+from ..state_manager import OrchestratorState
 
 router = APIRouter()
 

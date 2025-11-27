@@ -13,6 +13,18 @@ import type {
 const DEFAULT_ORCH_WS_URL = 'ws://localhost:8000';
 const ORCH_WS_URL = publicEnv.PUBLIC_ORCH_WS_URL ?? DEFAULT_ORCH_WS_URL;
 
+type ConsolePayload = {
+  message: string;
+  level?: string;
+  [key: string]: unknown;
+};
+
+type ControlPresetPayload = {
+  preset?: string;
+  active_preset?: string;
+  ts?: number;
+};
+
 type OrchestratorEvent =
   | { type: 'status'; payload: OrchestratorStatus }
   | { type: 'module.toggle'; module: string; enabled: boolean; state?: string }
@@ -21,9 +33,11 @@ type OrchestratorEvent =
   | { type: 'obs_scene'; scene: string; ts: number }
   | { type: 'vts_expression'; data: ExpressionSnapshot }
   | { type: 'memory_summary'; summary: MemorySummary }
-  | { type: 'control.mute'; muted: boolean }
+  | { type: 'control.mute'; muted: boolean; ts?: number }
   | { type: 'control.panic'; ts?: number; reason?: string | null }
-  | { type: 'control.preset'; preset?: string };
+  | ({ type: 'control.preset' } & ControlPresetPayload)
+  | ({ type: 'control_preset' } & ControlPresetPayload)
+  | { type: 'console'; data: ConsolePayload };
 
 export type TelemetryMessage = OrchestratorEvent;
 
@@ -221,24 +235,36 @@ class TelemetrySocketManager {
   }
 
   private consumeChunk(chunk: string): void {
-    this.buffer += chunk;
-    const pieces = this.buffer.split('\n');
+    const pending = this.buffer + chunk;
+    const pieces = pending.split('\n');
     this.buffer = pieces.pop() ?? '';
 
     for (const piece of pieces) {
-      const trimmed = piece.trim();
-      if (!trimmed) continue;
+      this.tryParsePayload(piece);
+    }
 
-      try {
-        const payload = JSON.parse(trimmed);
-        if (isTelemetryMessage(payload)) {
-          this.listener(payload);
-        } else {
-          console.warn('[telemetry] ignored unknown payload', payload);
-        }
-      } catch (error) {
+    if (this.buffer && this.tryParsePayload(this.buffer, true)) {
+      this.buffer = '';
+    }
+  }
+
+  private tryParsePayload(raw: string, deferOnError = false): boolean {
+    const trimmed = raw.trim();
+    if (!trimmed) return true;
+
+    try {
+      const payload = JSON.parse(trimmed);
+      if (isTelemetryMessage(payload)) {
+        this.listener(payload);
+      } else {
+        console.warn('[telemetry] ignored unknown payload', payload);
+      }
+      return true;
+    } catch (error) {
+      if (!deferOnError) {
         console.warn('[telemetry] failed to parse payload', error);
       }
+      return false;
     }
   }
 }
@@ -315,6 +341,15 @@ function isOrchestratorEvent(payload: unknown): payload is OrchestratorEvent {
       return isExpressionSnapshot(payload.data);
     case 'memory_summary':
       return isMemorySummary(payload.summary);
+    case 'control.mute':
+      return isControlMuteEvent(payload);
+    case 'control.panic':
+      return isControlPanicEvent(payload);
+    case 'control.preset':
+    case 'control_preset':
+      return isControlPresetEvent(payload);
+    case 'console':
+      return isConsoleEvent(payload);
     default:
       return false;
   }
@@ -433,4 +468,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isOptionalString(value: unknown): value is string | null | undefined {
+  return typeof value === 'string' || value === null || typeof value === 'undefined';
+}
+
+function isControlMuteEvent(payload: Record<string, unknown>): payload is Extract<OrchestratorEvent, { type: 'control.mute' }> {
+  return (
+    typeof payload.muted === 'boolean' &&
+    (!('ts' in payload) || payload.ts === undefined || isNumber(payload.ts))
+  );
+}
+
+function isControlPanicEvent(payload: Record<string, unknown>): payload is Extract<OrchestratorEvent, { type: 'control.panic' }> {
+  if ('ts' in payload && payload.ts !== undefined && !isNumber(payload.ts)) {
+    return false;
+  }
+  if ('reason' in payload && !(typeof payload.reason === 'string' || payload.reason === null || typeof payload.reason === 'undefined')) {
+    return false;
+  }
+  return true;
+}
+
+function isControlPresetEvent(payload: Record<string, unknown>): payload is Extract<OrchestratorEvent, { type: 'control.preset' | 'control_preset' }> {
+  if ('preset' in payload && !isOptionalString(payload.preset)) {
+    return false;
+  }
+  if ('active_preset' in payload && !isOptionalString(payload.active_preset)) {
+    return false;
+  }
+  if ('ts' in payload && payload.ts !== undefined && !isNumber(payload.ts)) {
+    return false;
+  }
+  return true;
+}
+
+function isConsoleEvent(payload: Record<string, unknown>): payload is Extract<OrchestratorEvent, { type: 'console' }> {
+  if (!isRecord(payload.data)) {
+    return false;
+  }
+  const data = payload.data as Record<string, unknown>;
+  if (typeof data.message !== 'string') {
+    return false;
+  }
+  if ('level' in data && data.level !== undefined && typeof data.level !== 'string') {
+    return false;
+  }
+  return true;
 }

@@ -18,6 +18,7 @@ kitsu-telemetry/ui/.svelte-kit/
 kitsu-telemetry/ui/build/
 kitsu-telemetry/ui/dist/
 kitsu-telemetry/ui/.vite/
+site/
 
 # Editor files
 .idea/

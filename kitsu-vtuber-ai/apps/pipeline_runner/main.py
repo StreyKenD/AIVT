@@ -15,6 +15,7 @@ from typing import Callable, Dict, Iterable, List, Optional
 import httpx
 
 from libs.config import get_app_config
+from libs.common import configure_json_logging
 
 from .utils import (
     combine_predicates,
@@ -461,10 +462,7 @@ async def run_pipeline() -> None:
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_json_logging("pipeline_runner")
     try:
         await run_pipeline()
     except KeyboardInterrupt:  # pragma: no cover - interactive use

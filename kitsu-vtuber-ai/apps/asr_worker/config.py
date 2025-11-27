@@ -37,6 +37,10 @@ class ASRConfig:
     allow_non_english: bool = False
     backend: str = "whisper"
     sherpa: SherpaConfig = field(default_factory=SherpaConfig)
+    resource_cpu_threshold_pct: float = 85.0
+    resource_gpu_threshold_pct: float = 95.0
+    resource_check_interval_seconds: float = 1.0
+    resource_busy_timeout_seconds: float = 0.0
 
     @property
     def frame_samples(self) -> int:
@@ -88,6 +92,10 @@ def load_config() -> ASRConfig:
             provider=settings.sherpa.provider,
             decoding_method=settings.sherpa.decoding_method,
         ),
+        resource_cpu_threshold_pct=settings.resource_cpu_threshold_pct,
+        resource_gpu_threshold_pct=settings.resource_gpu_threshold_pct,
+        resource_check_interval_seconds=settings.resource_check_interval_seconds,
+        resource_busy_timeout_seconds=settings.resource_busy_timeout_seconds,
     )
 
 

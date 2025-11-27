@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import importlib
 import json
@@ -15,9 +16,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from libs.cache import TTLCache
 from libs.common import configure_json_logging
 from libs.config import LocalLLMSettings, OpenAISettings, get_app_config
 from libs.contracts import PolicyRequestPayload
+from libs.monitoring.resource import ResourceMonitor, ResourceBusyError
 from libs.safety import ModerationPipeline
 from libs.telemetry import TelemetryClient
 
@@ -59,6 +62,16 @@ TELEMETRY = (
     if orchestrator_cfg.telemetry_url
     else None
 )
+POLICY_CACHE = TTLCache(
+    max_entries=policy_cfg.memory_cache_max_entries,
+    ttl_seconds=policy_cfg.memory_cache_ttl_seconds,
+)
+POLICY_RESOURCE_MONITOR = ResourceMonitor(
+    cpu_threshold=policy_cfg.resource_cpu_threshold_pct,
+    gpu_threshold=policy_cfg.resource_gpu_threshold_pct,
+    sample_interval=policy_cfg.resource_check_interval_seconds,
+)
+POLICY_BUSY_TIMEOUT = policy_cfg.resource_busy_timeout_seconds
 
 
 async def _publish_policy_metric(event_type: str, payload: Dict[str, Any]) -> None:
@@ -155,7 +168,12 @@ def _load_optional_module(name: str):
 
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    payload = dict(data)
+    if event == "final":
+        payload.setdefault("is_final", True)
+    elif event == "token":
+        payload.setdefault("is_final", False)
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _parse_sse(chunk: str) -> tuple[str, Dict[str, Any]]:
@@ -182,6 +200,22 @@ def _tokenize_for_streaming(message: str) -> List[str]:
         else:
             tokens.append(chunk)
     return tokens
+
+
+def _cache_key(payload: PolicyRequestPayload, persona: Dict[str, Any]) -> str:
+    digest = hashlib.sha1()
+    digest.update(payload.text.encode("utf-8"))
+    digest.update(json.dumps(persona, sort_keys=True).encode("utf-8"))
+    if payload.memory_summary:
+        digest.update(payload.memory_summary.encode("utf-8"))
+    for turn in payload.recent_turns[-4:]:
+        digest.update(turn["role"].encode("utf-8"))
+        digest.update(turn["content"].encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _clone_final_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return json.loads(json.dumps(payload))
 
 
 def _build_persona_snapshot(
@@ -657,10 +691,74 @@ LLM_CLIENT = _create_llm_client()
 
 
 async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator[str]:
+    """Stream SSE events for a policy request, including cache/busy shortcuts."""
     request_id = uuid.uuid4().hex
     family_mode = _family_mode(payload)
     persona = _build_persona_snapshot(payload, family_mode)
     start = time.perf_counter()
+    try:
+        await POLICY_RESOURCE_MONITOR.wait_for_capacity(timeout=POLICY_BUSY_TIMEOUT)
+    except ResourceBusyError:
+        await _publish_policy_metric(
+            "policy.busy",
+            {
+                "request_id": request_id,
+                "persona": persona,
+                "text_length": len(payload.text),
+            },
+        )
+        yield _format_sse(
+            "start",
+            {
+                "request_id": request_id,
+                "model": MODEL_NAME,
+                "persona": persona,
+                "source": "busy",
+            },
+        )
+        yield _format_sse(
+            "busy",
+            {"request_id": request_id, "reason": "resource_pressure"},
+        )
+        return
+    cache_key: Optional[str] = None
+    cached_payload: Optional[Dict[str, Any]] = None
+    if payload.is_final:
+        cache_key = _cache_key(payload, persona)
+        cached_payload = POLICY_CACHE.get(cache_key)
+    if cached_payload is not None:
+        await _publish_policy_metric(
+            "policy.cache",
+            {
+                "request_id": request_id,
+                "persona": persona,
+                "text_length": len(payload.text),
+                "hit": True,
+            },
+        )
+        start_event = {
+            "request_id": request_id,
+            "model": MODEL_NAME,
+            "persona": persona,
+            "source": "cache",
+            "cached": True,
+        }
+        yield _format_sse("start", start_event)
+        cached_copy = _clone_final_payload(cached_payload)
+        cached_copy.setdefault("meta", {}).setdefault("cache", {})["layer"] = "memory"
+        cached_copy["request_id"] = request_id
+        yield _format_sse("final", cached_copy)
+        return
+    if payload.is_final:
+        await _publish_policy_metric(
+            "policy.cache",
+            {
+                "request_id": request_id,
+                "persona": persona,
+                "text_length": len(payload.text),
+                "hit": False,
+            },
+        )
     prompt_guard = await MODERATION.guard_prompt(payload.text)
     source = LLM_CLIENT.backend
     if not prompt_guard.allowed:
@@ -674,6 +772,7 @@ async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator
             "model": MODEL_NAME,
             "persona": persona,
             "source": source,
+            "is_final_request": payload.is_final,
         },
     )
 
@@ -757,6 +856,11 @@ async def policy_event_generator(payload: PolicyRequestPayload) -> AsyncIterator
                     elif response_moderation:
                         data.setdefault("meta", {})["moderation"] = response_moderation
                         chunk = _format_sse("final", data)
+                    status_flag = str(
+                        data.get("meta", {}).get("status", "ok")
+                    ).lower()
+                    if status_flag == "ok" and payload.is_final and cache_key:
+                        POLICY_CACHE.put(cache_key, _clone_final_payload(data))
                 yield chunk
             return
         except LLMStreamError as exc:
@@ -830,19 +934,27 @@ app = FastAPI(title="Kitsu Policy Worker", version="0.3.0")
 
 @app.post("/respond")
 async def respond(payload: PolicyRequestPayload) -> StreamingResponse:
+    """FastAPI endpoint that streams the LLM response as Server-Sent Events."""
     if not payload.text.strip():  # pragma: no cover - defensive validation
         raise HTTPException(status_code=422, detail="Prompt must not be empty")
     logger.info(
-        "Policy request text=%s style=%s chaos=%.2f energy=%.2f family=%s",
+        "Policy request text=%s style=%s chaos=%.2f energy=%.2f family=%s final=%s",
         payload.text[:64],
         payload.persona_style,
         payload.chaos_level,
         payload.energy,
         _family_mode(payload),
+        payload.is_final,
     )
     return StreamingResponse(
         policy_event_generator(payload), media_type="text/event-stream"
     )
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Dispose global resource monitors when the worker stops."""
+    POLICY_RESOURCE_MONITOR.shutdown()
 
 
 if __name__ == "__main__":

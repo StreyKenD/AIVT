@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Protocol
 
 import numpy as np
 
+from libs.cache import TTLCache
 from libs.config import (
     BarkTTSSettings,
     CoquiTTSSettings,
@@ -20,14 +21,16 @@ from libs.config import (
     TTSSettings,
     XTTSSettings,
 )
+from libs.monitoring.resource import ResourceMonitor, ResourceBusyError
 from libs.telemetry import TelemetryClient
 
 logger = logging.getLogger("kitsu.tts")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 
 @dataclass
 class TTSResult:
+    """Represents the synthesized waveform and metadata returned to callers."""
+
     audio_path: Path
     visemes: List[Dict[str, float]]
     voice: str
@@ -437,6 +440,7 @@ class TelemetryClientProtocol(Protocol):
 
 
 class TTSService:
+    """Queue worker coordinating synthesizers, caching, and telemetry."""
     def __init__(
         self,
         *,
@@ -448,11 +452,21 @@ class TTSService:
         output_dir = Path(output_root)
         self._config = config
         self._cache = TTSDiskCache(output_dir)
+        self._memory_cache = TTLCache(
+            max_entries=config.memory_cache_max_entries,
+            ttl_seconds=config.memory_cache_ttl_seconds,
+        )
         self._synthesizers = _build_synthesizers(config)
         self._queue: asyncio.Queue[TTSJob] = asyncio.Queue()
         self._current_job: Optional[TTSJob] = None
         self._cancel_event = asyncio.Event()
         self._telemetry = telemetry or TelemetryClient.from_env(source="tts_worker")
+        self._resource_monitor = ResourceMonitor(
+            cpu_threshold=config.resource_cpu_threshold_pct,
+            gpu_threshold=config.resource_gpu_threshold_pct,
+            sample_interval=config.resource_check_interval_seconds,
+        )
+        self._resource_busy_timeout = config.resource_busy_timeout_seconds
         real_backends = [
             s for s in self._synthesizers if not isinstance(s, SilentSynthesizer)
         ]
@@ -462,9 +476,35 @@ class TTSService:
             output_dir,
         )
 
+    def _cache_key(self, text: str, voice: Optional[str]) -> str:
+        digest = hashlib.sha1()
+        digest.update(text.encode("utf-8"))
+        digest.update((voice or "default").encode("utf-8"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def _clone_result(result: TTSResult, *, cached: bool) -> TTSResult:
+        return TTSResult(
+            audio_path=result.audio_path,
+            visemes=[dict(item) for item in result.visemes],
+            voice=result.voice,
+            latency_ms=result.latency_ms,
+            cached=cached,
+            backend=result.backend,
+        )
+
     async def enqueue(
         self, text: str, voice: Optional[str] = None, request_id: Optional[str] = None
     ) -> TTSResult:
+        """Add a request to the synthesis queue and await its completion."""
+        if self._resource_monitor is not None:
+            try:
+                await self._resource_monitor.wait_for_capacity(
+                    timeout=self._resource_busy_timeout
+                )
+            except ResourceBusyError:
+                await self._emit_busy_event(stage="enqueue")
+                raise
         loop = asyncio.get_running_loop()
         future: "asyncio.Future[TTSResult]" = loop.create_future()
         job = TTSJob(
@@ -477,12 +517,14 @@ class TTSService:
         return await future
 
     async def cancel_active(self) -> None:
+        """Signal cancellation to the synthesizer currently running."""
         if self._current_job is None:
             return
         logger.info("Cancelling TTS job in progress: %s", self._current_job.request_id)
         self._cancel_event.set()
 
     async def worker(self) -> None:
+        """Continuously drain the queue and synthesize audio."""
         logger.info("TTS queue ready (%d synthesizers)", len(self._synthesizers))
         while True:
             job = await self._queue.get()
@@ -493,20 +535,41 @@ class TTSService:
                 job.voice,
                 self._queue.qsize(),
             )
+            cache_key = self._cache_key(job.text, job.voice)
+            memory_hit = self._memory_cache.get(cache_key)
+            if memory_hit is not None:
+                await self._emit_cache_event(layer="memory", hit=True)
+                cached_result = self._clone_result(memory_hit, cached=True)
+                logger.info(
+                    "TTS memory cache hit request_id=%s voice=%s backend=%s",
+                    job.request_id,
+                    cached_result.voice,
+                    cached_result.backend,
+                )
+                job.backend = cached_result.backend
+                job.future.set_result(cached_result)
+                await self._emit_metric(job, cached_result, cached=True)
+                self._queue.task_done()
+                continue
+            await self._emit_cache_event(layer="memory", hit=False)
             cached = self._cache.get(job.text, job.voice)
             if cached:
+                await self._emit_cache_event(layer="disk", hit=True)
                 logger.info(
-                    "TTS cache hit request_id=%s voice=%s latency_ms=%.2f backend=%s",
+                    "TTS disk cache hit request_id=%s voice=%s latency_ms=%.2f backend=%s",
                     job.request_id,
                     cached.voice,
                     cached.latency_ms,
                     cached.backend,
                 )
-                job.backend = cached.backend
-                job.future.set_result(cached)
-                await self._emit_metric(job, cached, cached=True)
+                cached_result = self._clone_result(cached, cached=True)
+                job.backend = cached_result.backend
+                self._memory_cache.put(cache_key, cached_result)
+                job.future.set_result(cached_result)
+                await self._emit_metric(job, cached_result, cached=True)
                 self._queue.task_done()
                 continue
+            await self._emit_cache_event(layer="disk", hit=False)
             self._cancel_event.clear()
             self._current_job = job
             start = time.perf_counter()
@@ -514,6 +577,8 @@ class TTSService:
                 result = await self._synthesize(job)
                 result.latency_ms = round((time.perf_counter() - start) * 1000, 2)
                 self._cache.store(job.text, job.voice, result)
+                memory_copy = self._clone_result(result, cached=True)
+                self._memory_cache.put(cache_key, memory_copy)
                 job.future.set_result(result)
                 await self._emit_metric(job, result, cached=False)
             except asyncio.CancelledError as exc:
@@ -558,7 +623,35 @@ class TTSService:
         except Exception as exc:  # pragma: no cover - telemetry guard
             logger.warning("Failed to send TTS metric: %s", exc)
 
+    async def _emit_busy_event(self, *, stage: str) -> None:
+        """Publish a telemetry event that the worker is temporarily overloaded."""
+        if self._telemetry is None:
+            return
+        payload: Dict[str, object] = {
+            "stage": stage,
+            "queue_depth": self._queue.qsize(),
+        }
+        try:
+            await self._telemetry.publish("tts.busy", payload)
+        except Exception as exc:  # pragma: no cover - telemetry guard
+            logger.warning("Failed to publish TTS busy event: %s", exc)
+
+    async def _emit_cache_event(self, *, layer: str, hit: bool) -> None:
+        """Publish cache hit/miss telemetry for the given layer."""
+        if self._telemetry is None:
+            return
+        payload = {
+            "layer": layer,
+            "hit": hit,
+            "queue_depth": self._queue.qsize(),
+        }
+        try:
+            await self._telemetry.publish("tts.cache", payload)
+        except Exception as exc:  # pragma: no cover - telemetry guard
+            logger.warning("Failed to publish TTS cache metric: %s", exc)
+
     async def _synthesize(self, job: TTSJob) -> TTSResult:
+        """Run the configured synthesizers until one produces audio."""
         audio_path, _ = self._cache.resolve(job.text, job.voice)
         last_error: Optional[str] = None
         for synthesizer in self._synthesizers:
@@ -598,6 +691,7 @@ class TTSService:
     def _describe_voice(
         synthesizer: Synthesizer, requested_voice: Optional[str]
     ) -> str:
+        """Resolve a user-friendly voice identifier for telemetry/logging."""
         descriptor = getattr(synthesizer, "describe_voice", None)
         if callable(descriptor):
             resolved = descriptor(requested_voice)
@@ -606,6 +700,9 @@ class TTSService:
         if requested_voice:
             return requested_voice
         return synthesizer.__class__.__name__.lower()
+
+    def shutdown(self) -> None:
+        self._resource_monitor.shutdown()
 
     @staticmethod
     def _viseme_from_text(text: str) -> List[Dict[str, float]]:

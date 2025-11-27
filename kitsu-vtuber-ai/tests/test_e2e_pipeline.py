@@ -38,7 +38,16 @@ async def test_mocked_pipeline_flow(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     tts_calls: List[Dict[str, Any]] = []
 
-    async def fake_policy(payload: Dict[str, Any], broker: Any) -> Dict[str, Any]:
+    async def fake_policy(
+        payload: Dict[str, Any],
+        broker: Any,
+        stream_handler: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        if stream_handler is not None:
+            await stream_handler(
+                "start",
+                {"request_id": "req-e2e", "is_final_request": payload.get("is_final", True)},
+            )
         await broker.publish({"type": "policy.token", "payload": {"token": "demo"}})
         return {
             "content": "<speech>Hello friend!</speech>",
